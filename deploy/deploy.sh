@@ -4,10 +4,13 @@ set -euo pipefail
 
 DEPLOY_DIR="${DEPLOY_DIR:-/app/Clipsync/admin}"
 VERSION="${VERSION:?VERSION is required}"
+# Server 配置可能所在的路径（按优先级）
 SERVER_CFG_CANDIDATES=(
-  "/app/Clipsync/server/config.yaml"
-  "/app/Clipsync/server/config.yml"
-  "/app/Clipsync/config.yaml"
+  "/app/ClipSync/server/config/config.yaml"
+  "/app/ClipSync/server/config.yml"
+  "/app/ClipSync/config/config.yaml"
+  "/app/Clipsync/server/config/config.yaml"
+  "/opt/clipsync/config/config.yaml"
 )
 
 echo "==> whoami: $(whoami)"
@@ -59,7 +62,7 @@ cfg_get() {
 gen_config() {
   local server_cfg="$1"
   local mysql_host mysql_port mysql_user mysql_pass mysql_db
-  local redis_addr redis_pass redis_db redis_user key_prefix admin_token
+  local redis_addr redis_pass redis_db key_prefix admin_token jwt_secret
 
   mysql_host=$(cfg_get "$server_cfg" mysql host)
   mysql_port=$(cfg_get "$server_cfg" mysql port)
@@ -69,79 +72,87 @@ gen_config() {
   redis_addr=$(cfg_get "$server_cfg" redis addr)
   redis_pass=$(cfg_get "$server_cfg" redis password)
   redis_db=$(cfg_get "$server_cfg" redis db)
-  redis_user=$(cfg_get "$server_cfg" redis username)
   key_prefix=$(cfg_get "$server_cfg" redis key_prefix)
   admin_token=$(cfg_get "$server_cfg" server admin_token)
 
-  MYSQL_HOST="${mysql_host:-127.0.0.1}"
-  MYSQL_PORT="${mysql_port:-3306}"
-  MYSQL_USER="${mysql_user:-clipsync}"
-  MYSQL_PASS="${mysql_pass:-clipsync}"
-  MYSQL_DB="${mysql_db:-clipsync}"
-  REDIS_ADDR="${redis_addr:-127.0.0.1:6379}"
-  REDIS_PASS="${redis_pass:-}"
-  REDIS_DB="${redis_db:-0}"
-  REDIS_USER="${redis_user:-}"
-  KEY_PREFIX="${key_prefix:-clipsync:}"
-  ADMIN_TOKEN="${admin_token:-}"
-
-  local jwt_secret
+  mysql_host="${mysql_host:-127.0.0.1}"
+  mysql_port="${mysql_port:-3306}"
+  mysql_user="${mysql_user:-clipsync}"
+  mysql_pass="${mysql_pass:-}"
+  mysql_db="${mysql_db:-clipsync}"
+  redis_addr="${redis_addr:-127.0.0.1:6379}"
+  redis_pass="${redis_pass:-}"
+  redis_db="${redis_db:-1}"
+  key_prefix="${key_prefix:-clipsync:}"
+  admin_token="${admin_token:-}"
   jwt_secret=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
 
-  echo "==> 从 $server_cfg 读取：mysql=${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DB}, redis=${REDIS_ADDR}"
+  # DSN 中密码可能含特殊字符（如 **），直接拼进 YAML 双引号字符串即可
+  echo "==> 从 $server_cfg 读取：mysql=${mysql_user}@${mysql_host}:${mysql_port}/${mysql_db}, redis=${redis_addr}/${redis_db}"
 
   cat <<EOF
-# ClipSync-Admin 配置（由 deploy.sh 自动生成）
 app:
   name: clipsync-admin
   addr: ":28002"
   mode: release
 
 mysql:
-  host: "${MYSQL_HOST}"
-  port: ${MYSQL_PORT}
-  username: "${MYSQL_USER}"
-  password: "${MYSQL_PASS}"
-  database: "${MYSQL_DB}"
+  dsn: "${mysql_user}:${mysql_pass}@tcp(${mysql_host}:${mysql_port})/${mysql_db}?charset=utf8mb4&parseTime=True&loc=Local"
   max_idle_conns: 10
   max_open_conns: 100
   conn_max_lifetime: 3600
 
 redis:
-  addr: "${REDIS_ADDR}"
-  username: "${REDIS_USER}"
-  password: "${REDIS_PASS}"
-  db: ${REDIS_DB}
-  pool_size: 20
+  addr: "${redis_addr}"
+  password: "${redis_pass}"
+  db: ${redis_db}
 
-logs:
-  level: info
-  filename: ""
-  max_size: 50
-  max_backups: 7
-  max_age: 30
-  stdout: true
-
-server:
-  key_prefix: "${KEY_PREFIX}"
-  addr: "https://www.95qw.com/clipsync"
-  http_admin_token: "${ADMIN_TOKEN}"
-
-upload:
-  dir: uploads
-  url_prefix: "/clipsync/admin/static"
-  max_size: 10
+jwt:
+  secret: "${jwt_secret}"
+  header: "Authorization"
+  scheme: "Bearer"
+  ttl: 7200
+  refresh_on_access: true
 
 security:
-  jwt_secret: "${jwt_secret}"
-  jwt_ttl_hours: 24
+  bcrypt_cost: 10
+  login_error_limit: 5
+  login_error_ttl: 900
   sign_static_secret: "clipsync-admin-static-sign-secret-v1"
-  cors_allow_origins:
-    - "*"
+
+cors:
+  allow_origins:
+    - "https://www.95qw.com"
+  allow_credentials: true
+
+log:
+  level: "info"
+  format: "console"
+
+bootstrap:
+  super_admin_account: "admin"
+  super_admin_password: "Admin**8"
+  super_admin_name: "超级管理员"
+
+upload:
+  dir: "./data/uploads"
+  url_prefix: "/clipsync/admin/static"
+  max_size: 10485760
+  allow_ext: [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+
+server:
+  key_prefix: "${key_prefix}"
+  addr: "https://www.95qw.com/clipsync"
+  http_admin_token: "${admin_token}"
 EOF
 }
 
-if [ ! -f "$CFG" ]; then
+if [ ! -f "$CFG" ] || ! $SUDO grep -q "mysql:" "$CFG" || ! $SUDO grep -qE "^\s*dsn:" "$CFG"; then
+  # 配置不存在、或不是 admin 合法配置（缺少 mysql.dsn），重新生成
+  if [ -f "$CFG" ]; then
+    echo "==> 旧的 config.yaml 结构不正确，备份并重新生成"
+    $SUDO cp "$CFG" "${CFG}.bak.$(date +%s)"
+  fi
   SERVER_CFG=""
   for c in "${SERVER_CFG_CANDIDATES[@]}"; do
     if [ -f "$c" ]; then SERVER_CFG="$c"; break; fi
@@ -168,11 +179,11 @@ echo "ADMIN_TAG=latest" | $SUDO tee -a .env > /dev/null
 # 清除过期 GHCR 凭据
 $SUDO docker logout ghcr.io >/dev/null 2>&1 || true
 
-# 拉取并启动
+# 拉取并启动（配置可能变化，用 --force-recreate）
 echo "==> docker compose pull admin..."
 $SUDO docker compose pull admin
-echo "==> docker compose up -d admin..."
-$SUDO docker compose up -d admin
+echo "==> docker compose up -d --force-recreate admin..."
+$SUDO docker compose up -d --force-recreate admin
 
 $SUDO docker image prune -f || true
 rm -rf /tmp/clipsync-admin-deploy
