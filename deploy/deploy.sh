@@ -156,10 +156,10 @@ server:
 EOF
 }
 
-if [ ! -f "$CFG" ] || ! $SUDO grep -q "mysql:" "$CFG" || ! $SUDO grep -qE "^\s*dsn:" "$CFG"; then
-  # 配置不存在、或不是 admin 合法配置（缺少 mysql.dsn），重新生成
+if [ ! -f "$CFG" ] || ! $SUDO head -1 "$CFG" | grep -q '^app:'; then
+  # 配置不存在、或第一行不是 app:（说明文件损坏/被污染），重新生成
   if [ -f "$CFG" ]; then
-    echo "==> 旧的 config.yaml 结构不正确，备份并重新生成"
+    echo "==> 旧的 config.yaml 已损坏，备份并重新生成"
     $SUDO cp "$CFG" "${CFG}.bak.$(date +%s)"
   fi
   SERVER_CFG=""
