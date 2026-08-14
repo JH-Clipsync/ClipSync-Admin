@@ -229,6 +229,13 @@ BLOCK
 for f in /etc/nginx/conf.d/*.conf; do
   [ -f "$f" ] || continue
   if $SUDO grep -q "95qw" "$f" 2>/dev/null; then
+    CHANGED=0
+    # 修复 API 代理路径：28002/api/ → 28002/api/admin/（后端路由前缀）
+    if $SUDO grep -q "proxy_pass http://127.0.0.1:28002/api/;" "$f" 2>/dev/null; then
+      echo "  → 修复 $f 中 API proxy_pass（/api/ → /api/admin/）"
+      $SUDO sed -i 's|proxy_pass http://127.0.0.1:28002/api/;|proxy_pass http://127.0.0.1:28002/api/admin/;|g' "$f"
+      CHANGED=1
+    fi
     # 如果存在旧的有 bug 的 assets 嵌套 location（alias 路径拼接问题），整体替换
     if $SUDO grep -q 'location ~\* \^/clipsync/admin/assets' "$f" 2>/dev/null || \
        $SUDO grep -q 'alias /app/ClipSync/server/admin/web' "$f" 2>/dev/null || \
@@ -256,6 +263,10 @@ for f in /etc/nginx/conf.d/*.conf; do
         { print }
       ' "${f}.new" | $SUDO tee "$f" > /dev/null
       $SUDO rm -f "${f}.new" /tmp/_clipsync_static_block
+      CHANGED=1
+    fi
+    if [ "$CHANGED" = "1" ]; then
+      $SUDO cp "$f" "${f}.bak.$(date +%s)" 2>/dev/null || true
     fi
   fi
 done
