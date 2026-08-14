@@ -100,7 +100,7 @@ jobs:
       - name: 通过 SSH 执行部署脚本
         uses: appleboy/ssh-action@v1.2.0
         env:
-          DEPLOY_DIR: ${{ secrets.DEPLOY_ADMIN_DIR || '/app/ClipSync/server/admin/api' }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_ADMIN_DIR || '/app/ClipSync/admin/api' }}
           VERSION: ${{ needs.docker.outputs.version }}
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
