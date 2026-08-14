@@ -151,13 +151,12 @@ upload:
 
 server:
   key_prefix: "${key_prefix}"
-  addr: "https://www.95qw.com/clipsync"
+  addr: "http://127.0.0.1:28001"
   http_admin_token: "${admin_token}"
 EOF
 }
 
 if [ ! -f "$CFG" ] || ! $SUDO head -1 "$CFG" | grep -q '^app:'; then
-  # 配置不存在、或第一行不是 app:（说明文件损坏/被污染），重新生成
   if [ -f "$CFG" ]; then
     echo "==> 旧的 config.yaml 已损坏，备份并重新生成"
     $SUDO cp "$CFG" "${CFG}.bak.$(date +%s)"
@@ -176,6 +175,11 @@ if [ ! -f "$CFG" ] || ! $SUDO head -1 "$CFG" | grep -q '^app:'; then
 else
   if $SUDO grep -qE '^[[:space:]]*addr:[[:space:]]*":18082"' "$CFG"; then
     $SUDO sed -i -E 's|^([[:space:]]*addr:[[:space:]]*)":18082"|\1":28002"|' "$CFG"
+  fi
+  # 迁移旧的外网 server.addr 为容器内直连地址
+  if $SUDO grep -qE 'addr:[[:space:]]*"https?://[^"]*95qw[^"]*"' "$CFG"; then
+    echo "==> 迁移 server.addr 为容器内直连地址 http://127.0.0.1:28001"
+    $SUDO sed -i -E 's|^(  addr:).*|\1 "http://127.0.0.1:28001"|' "$CFG"
   fi
 fi
 

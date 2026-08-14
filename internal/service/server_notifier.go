@@ -136,6 +136,52 @@ func (n *ServerNotifier) SetDeviceStatus(ctx context.Context, userID int64, devi
 	})
 }
 
+// ServerDevice 对应 Server 端 /admin/users/{id}/devices 返回的设备信息。
+type ServerDevice struct {
+	UserID     int64  `json:"user_id"`
+	DeviceID   string `json:"device_id"`
+	Role       string `json:"role"`
+	Platform   string `json:"platform"`
+	Disabled   bool   `json:"disabled"`
+	Online     bool   `json:"online"`
+	LastSeenAt string `json:"last_seen_at"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// FetchDevices 调用 Server GET /admin/users/{id}/devices 获取设备列表（含在线状态）。
+func (n *ServerNotifier) FetchDevices(ctx context.Context, userID int64) ([]ServerDevice, error) {
+	if n.cfg.Addr == "" {
+		return nil, fmt.Errorf("server.addr 未配置，无法获取设备列表")
+	}
+	url := fmt.Sprintf("%s/admin/users/%d/devices", n.cfg.Addr, userID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if n.cfg.HTTPAdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+n.cfg.HTTPAdminToken)
+	}
+	resp, err := n.cli.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 Server 设备列表失败: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("Server 返回错误 status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		Devices []ServerDevice `json:"devices"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析 Server 响应失败: %w", err)
+	}
+	return result.Devices, nil
+}
+
 // commandViaHTTP HTTP 兜底。Server 端 /admin/kick 支持全动作。
 func (n *ServerNotifier) commandViaHTTP(ctx context.Context, cmd AdminCommand) error {
 	body, _ := json.Marshal(cmd)

@@ -255,12 +255,39 @@ type Device struct {
 	Disabled   bool      `gorm:"column:disabled" json:"disabled"`
 	LastSeenAt time.Time `gorm:"column:last_seen_at" json:"last_seen_at"`
 	CreatedAt  time.Time `gorm:"column:created_at" json:"created_at"`
+	Online     bool      `gorm:"-" json:"online"`
 }
 
 func (Device) TableName() string { return "devices" }
 
-// ListDevices 列出某账号下所有登记过的设备（含离线）。
+// ListDevices 列出某账号下所有登记过的设备（含离线），优先从 Server 接口获取实时在线状态。
 func (s *AdminDataService) ListDevices(ctx context.Context, userID int64) ([]Device, error) {
+	if s.kick != nil {
+		serverDevices, err := s.kick.FetchDevices(ctx, userID)
+		if err == nil {
+			list := make([]Device, 0, len(serverDevices))
+			for _, sd := range serverDevices {
+				d := Device{
+					UserID:   sd.UserID,
+					DeviceID: sd.DeviceID,
+					Role:     sd.Role,
+					Platform: sd.Platform,
+					Disabled: sd.Disabled,
+					Online:   sd.Online,
+				}
+				if t, err := time.Parse(time.RFC3339, sd.LastSeenAt); err == nil {
+					d.LastSeenAt = t
+				}
+				if t, err := time.Parse(time.RFC3339, sd.CreatedAt); err == nil {
+					d.CreatedAt = t
+				}
+				list = append(list, d)
+			}
+			return list, nil
+		}
+		fmt.Printf("fetch devices from server failed, fallback to db: %v\n", err)
+	}
+
 	var list []Device
 	if err := s.db.WithContext(ctx).
 		Where("user_id = ?", userID).
@@ -268,7 +295,27 @@ func (s *AdminDataService) ListDevices(ctx context.Context, userID int64) ([]Dev
 		Find(&list).Error; err != nil {
 		return nil, biz(result.CodeDBError, err.Error())
 	}
+	onlineSet := s.getOnlineDeviceIDs(ctx, userID)
+	for i := range list {
+		_, list[i].Online = onlineSet[list[i].DeviceID]
+	}
 	return list, nil
+}
+
+// getOnlineDeviceIDs 返回该用户当前在线的 deviceID 集合。
+func (s *AdminDataService) getOnlineDeviceIDs(ctx context.Context, userID int64) map[string]struct{} {
+	m := make(map[string]struct{})
+	if s.rdb == nil {
+		return m
+	}
+	res, err := s.rdb.HGetAll(ctx, s.onlineKey(userID)).Result()
+	if err != nil {
+		return m
+	}
+	for k := range res {
+		m[k] = struct{}{}
+	}
+	return m
 }
 
 // SetDeviceStatus 启用/禁用设备，并通知 Server 立即生效（禁用时踢该设备下线）。
