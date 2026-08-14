@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,7 +36,7 @@ jobs:
         id: owner
         run: echo "owner_lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
-      - name: "Docker meta (tags: latest / vX.Y.Z / semver / sha)"
+      - name: "Docker meta (tags: latest / vX.Y.Z / sha)"
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -45,8 +44,6 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
             type=sha,enable=${{ !startsWith(github.ref, 'refs/tags/v') }}
 
       - name: 从 git ref 提取版本号
@@ -61,7 +58,6 @@ jobs:
           echo "::notice::APP_VERSION=$VER"
 
       - name: Build and push (linux/amd64)
-        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -85,10 +81,10 @@ jobs:
       - name: 检出部署文件
         uses: actions/checkout@v4
 
-      - name: 等待 GHCR 镜像 manifest 全局传播（最多 30 秒）
+      - name: 等待 GHCR 镜像 manifest 全局传播
         run: |
-          sleep 15
-          echo "等待镜像 tag 在 GHCR 各边缘节点生效..."
+          sleep 20
+          echo "等待 latest 标签在 GHCR 各边缘节点生效..."
 
       - name: 通过 scp 上传 docker-compose.yml / .env.example
         uses: appleboy/scp-action@v0.1.7
@@ -103,16 +99,12 @@ jobs:
 
       - name: 通过 SSH 拉取镜像并重启
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
           username: ${{ secrets.DEPLOY_SSH_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
           script_stop: true
-          envs: GHCR_TOKEN,GHCR_USER
           script: |
             set -e
 
@@ -137,33 +129,13 @@ jobs:
 
             cd "$DEPLOY_DIR"
 
-            # 清理 .env 里的旧 ADMIN_TAG / WEB_TAG，再写入新版本
+            # 部署统一使用 latest 标签（和 version tag 指向同一个镜像）
             sudo sed -i '/^ADMIN_TAG=/d;/^WEB_TAG=/d' .env
-            echo "ADMIN_TAG=$VERSION" | sudo tee -a .env > /dev/null
-            echo "WEB_TAG=$VERSION"   | sudo tee -a .env > /dev/null
+            echo "ADMIN_TAG=latest" | sudo tee -a .env > /dev/null
+            echo "WEB_TAG=latest"   | sudo tee -a .env > /dev/null
 
-            # 先清除可能残留的错误缓存
-            sudo docker compose rm -f admin web 2>/dev/null || true
-
-            # 登录 GHCR
-            echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
-
-            # 诊断：先单独 pull admin 并查看详细错误
-            echo "==> 拉取 admin 镜像..."
-            if ! sudo docker pull "ghcr.io/jh-clipsync/clipsync-admin:$VERSION"; then
-              echo "❌ admin 镜像拉取失败，尝试用 latest 标签..."
-              sudo docker pull ghcr.io/jh-clipsync/clipsync-admin:latest
-            fi
-
-            echo "==> 拉取 web 镜像..."
-            if ! sudo docker pull "ghcr.io/jh-clipsync/clipsync-admin-web:$VERSION"; then
-              echo "❌ web 镜像拉取失败，尝试用 latest 标签..."
-              sudo docker pull ghcr.io/jh-clipsync/clipsync-admin-web:latest
-              # 如果用的 latest，.env 里的 tag 也要改
-              sudo sed -i "s/^WEB_TAG=.*/WEB_TAG=latest/" .env
-            fi
-
-            # 启动服务
+            # 拉取最新镜像并重启
+            sudo docker compose pull admin web
             sudo docker compose up -d admin web
 
             # 清理悬空镜像
@@ -172,5 +144,6 @@ jobs:
 
             echo "==> 部署完成，容器状态："
             sudo docker compose ps
+            echo ""
             echo "==> admin 日志（最后 20 行）："
             sudo docker compose logs --tail=20 admin || true
