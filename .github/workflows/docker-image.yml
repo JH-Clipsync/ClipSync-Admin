@@ -22,9 +22,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (cross-arch build)
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -62,11 +59,12 @@ jobs:
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "::notice::APP_VERSION=$VER"
 
-      - name: Build and push (amd64 + arm64)
+      - name: Build and push (linux/amd64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          # 只构建 amd64：绝大多数服务器为 x86_64，构建耗时从 ~10 分钟降到 ~2 分钟
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -99,18 +97,22 @@ jobs:
 
       - name: 通过 SSH 拉取镜像并重启
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
           username: ${{ secrets.DEPLOY_SSH_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
           script_stop: true
-          envs: DEPLOY_DIR,VERSION,GHCR_PAT,GHCR_USERNAME
+          envs: GHCR_TOKEN,GHCR_USER
           script: |
             set -e
 
             DEPLOY_DIR="${{ secrets.DEPLOY_ADMIN_DIR || '/opt/clipsync-admin' }}"
             VERSION="${{ needs.docker.outputs.version }}"
+            OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
 
             echo "==> 部署目录: $DEPLOY_DIR"
             echo "==> 版本: $VERSION"
@@ -133,10 +135,8 @@ jobs:
             echo "ADMIN_TAG=$VERSION" | sudo tee -a .env > /dev/null
             echo "WEB_TAG=$VERSION"   | sudo tee -a .env > /dev/null
 
-            # 登录 GHCR（public 镜像可跳过；私有镜像必须配置 GHCR_PAT）
-            if [ -n "${{ secrets.GHCR_PAT }}" ]; then
-              echo "${{ secrets.GHCR_PAT }}" | sudo docker login ghcr.io -u "${{ secrets.GHCR_USERNAME || github.actor }}" --password-stdin
-            fi
+            # 登录 GHCR（GITHUB_TOKEN 对同组织包有 read 权限，避免匿名拉取 401）
+            echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             # 拉取两个镜像并重启
             sudo docker compose pull admin web
