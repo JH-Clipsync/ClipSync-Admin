@@ -134,6 +134,9 @@ jobs:
             echo "ADMIN_TAG=latest" | sudo tee -a .env > /dev/null
             echo "WEB_TAG=latest"   | sudo tee -a .env > /dev/null
 
+            # 清除之前可能残留的过期 GHCR 凭据，避免 public 镜像拉取被 denied
+            sudo docker logout ghcr.io >/dev/null 2>&1 || true
+
             # 镜像为 public，无需 docker login；直接拉取
             # 拉取最新镜像并重启
             sudo docker compose pull admin web
