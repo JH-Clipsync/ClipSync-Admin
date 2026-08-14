@@ -51,13 +51,16 @@ upload:
   allow_ext: [".jpg", ".jpeg", ".png", ".webp", ".gif"]
 
 # 与 ClipSync-Server 联动的通道配置。
-# 管理端"重置用户密码/禁用用户/删除用户"时需要通知 Server 强制下线该用户所有连接。
+# 管理端"重置用户密码/禁用用户/删除用户/踢设备"时需要通知 Server 强制下线对应连接。
 # 默认走 Redis Pub/Sub（两边共享同一 Redis 实例时，零配置、最稳定）；
-# 若两边不共享 Redis，可填 server.addr 走 HTTP 兜底。
+# 若 Redis 下发失败，会走 HTTP 兜底：POST {addr}/admin/kick。
 server:
   # 与 ClipSync-Server 的 redis.key_prefix 保持一致（默认 "clipsync:"）。
   # 频道名 = key_prefix + "admin:kick_user"。
   key_prefix: "clipsync:"
-  # HTTP 兜底：Redis Pub/Sub 失败时再调用一次。不填则只有 Redis 通道。
-  # addr: "http://127.0.0.1:28001"
-  # http_admin_token: ""
+  # HTTP 兜底地址：外层反向代理域名 + /clipsync 前缀，会自动拼 /admin/kick。
+  # 例：https://www.95qw.com/clipsync/admin/kick
+  addr: "https://www.95qw.com/clipsync"
+  # HTTP 兜底时的 Bearer Token（需与 ClipSync-Server 端配置的 admin token 一致）。
+  # 生产环境务必修改；留空则不带 Authorization 头（Server 会拒绝）。
+  http_admin_token: ""
