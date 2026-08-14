@@ -158,10 +158,6 @@ EOF
 
 # 检测配置是否被之前有 bug 的迁移脚本改坏（redis.addr 被误改成 http URL）
 CFG_BROKEN=0
-if [ -f "$CFG" ]; then
-  echo "==> 当前 config.yaml 前 20 行："
-  $SUDO head -20 "$CFG" >&2
-fi
 if [ -f "$CFG" ] && $SUDO head -1 "$CFG" | grep -q '^app:'; then
   if $SUDO grep -A5 '^redis:' "$CFG" | grep -q "addr:.*http://"; then
     echo "==> 检测到 config.yaml 已损坏（redis.addr 含 http://），将重新生成"
