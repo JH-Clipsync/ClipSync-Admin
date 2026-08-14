@@ -2,7 +2,7 @@
 # ClipSync Admin 后端自动部署脚本（由 GitHub Actions 通过 SSH 执行）
 set -euo pipefail
 
-DEPLOY_DIR="${DEPLOY_DIR:-/app/Clipsync/admin}"
+DEPLOY_DIR="${DEPLOY_DIR:-/app/ClipSync/server/admin/api}"
 VERSION="${VERSION:?VERSION is required}"
 # Server 配置可能所在的路径（按优先级）
 SERVER_CFG_CANDIDATES=(
@@ -26,6 +26,13 @@ else
 fi
 
 $SUDO mkdir -p "$DEPLOY_DIR/config" "$DEPLOY_DIR/uploads"
+
+# 清理旧部署目录和旧容器（历史遗留）
+if [ "$DEPLOY_DIR" != "/app/Clipsync/admin" ] && [ -d "/app/Clipsync/admin" ]; then
+  echo "==> 清理旧部署目录 /app/Clipsync/admin"
+  cd /app/Clipsync/admin 2>/dev/null && $SUDO docker compose down 2>/dev/null || true
+  cd "$DEPLOY_DIR"
+fi
 
 # 每次 CI 都更新 docker-compose.yml
 $SUDO cp /tmp/clipsync-admin-deploy/deploy/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
@@ -186,7 +193,6 @@ echo "==> docker compose up -d --force-recreate admin..."
 $SUDO docker compose up -d --force-recreate admin
 
 $SUDO docker image prune -f || true
-rm -rf /tmp/clipsync-admin-deploy
 
 echo ""
 echo "==> 容器状态："
@@ -194,3 +200,27 @@ $SUDO docker compose ps
 echo ""
 echo "==> admin 最近日志："
 $SUDO docker compose logs --tail=30 admin || true
+
+# ── nginx 配置检查 ────────────────────────────────────────────
+echo ""
+echo "==> 检查 nginx 配置..."
+NGINX_CHECKED=0
+for f in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/*; do
+  [ -f "$f" ] || continue
+  if $SUDO grep -q "95qw" "$f" 2>/dev/null; then
+    NGINX_CHECKED=1
+    if ! $SUDO grep -q "/app/ClipSync/server/admin/web" "$f"; then
+      echo "  ⚠ $f 里的静态路径还是旧路径，更新中..."
+      $SUDO sed -i 's|/app/Clipsync/admin/web|/app/ClipSync/server/admin/web|g' "$f"
+    fi
+    if ! $SUDO grep -q "28002" "$f"; then
+      echo "  ⚠ $f 里没有 28002 反代规则，请参考 deploy/nginx.clipsync.conf 手动添加"
+    fi
+  fi
+done
+if [ "$NGINX_CHECKED" = "1" ] && $SUDO nginx -t 2>/dev/null; then
+  $SUDO nginx -s reload && echo "==> nginx 已 reload"
+else
+  echo "==> 参考配置：/tmp/clipsync-admin-deploy/deploy/nginx.clipsync.conf"
+fi
+rm -rf /tmp/clipsync-admin-deploy

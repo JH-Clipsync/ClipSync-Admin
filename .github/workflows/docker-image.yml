@@ -93,14 +93,14 @@ jobs:
           username: ${{ secrets.DEPLOY_SSH_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
-          source: "deploy/deploy.sh,deploy/docker-compose.yml,deploy/.env.example,config.example.yaml"
+          source: "deploy/deploy.sh,deploy/docker-compose.yml,deploy/.env.example,deploy/nginx.clipsync.conf,config.example.yaml"
           target: "/tmp/clipsync-admin-deploy"
           overwrite: true
 
       - name: 通过 SSH 执行部署脚本
         uses: appleboy/ssh-action@v1.2.0
         env:
-          DEPLOY_DIR: ${{ secrets.DEPLOY_ADMIN_DIR || '/app/Clipsync/admin' }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_ADMIN_DIR || '/app/ClipSync/server/admin/api' }}
           VERSION: ${{ needs.docker.outputs.version }}
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
