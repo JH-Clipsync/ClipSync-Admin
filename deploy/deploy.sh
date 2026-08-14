@@ -203,30 +203,66 @@ echo ""
 echo "==> admin 最近日志："
 $SUDO docker compose logs --tail=30 admin || true
 
-# ── nginx 配置检查 ────────────────────────────────────────────
+# ── nginx 配置检查/修复 ────────────────────────────────────────
 echo ""
 echo "==> 检查 nginx 配置..."
-NGINX_CHECKED=0
-for f in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/*; do
+
+# 先生成静态文件 location 块片段
+STATIC_BLOCK=$(cat <<'BLOCK'
+    # ── Admin 前端静态文件（/clipsync/admin/ → /app/ClipSync/admin/web/）──
+    location ^~ /clipsync/admin/assets/ {
+        alias /app/ClipSync/admin/web/assets/;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+
+    location /clipsync/admin/ {
+        alias /app/ClipSync/admin/web/;
+        index index.html;
+        try_files $uri $uri/ /clipsync/admin/index.html;
+    }
+
+BLOCK
+)
+
+for f in /etc/nginx/conf.d/*.conf; do
   [ -f "$f" ] || continue
   if $SUDO grep -q "95qw" "$f" 2>/dev/null; then
-    NGINX_CHECKED=1
-    # 把所有旧的静态路径统一替换为正确路径
-    if ! $SUDO grep -q "/app/ClipSync/admin/web" "$f"; then
-      echo "  ⚠ $f 里的静态路径需要更新..."
-      $SUDO sed -i \
-        -e 's|/app/Clipsync/admin/web|/app/ClipSync/admin/web|g' \
-        -e 's|/app/ClipSync/server/admin/web|/app/ClipSync/admin/web|g' \
-        "$f"
-    fi
-    if ! $SUDO grep -q "28002" "$f"; then
-      echo "  ⚠ $f 里没有 28002 反代规则，请参考 deploy/nginx.clipsync.conf 手动添加"
+    # 如果存在旧的有 bug 的 assets 嵌套 location（alias 路径拼接问题），整体替换
+    if $SUDO grep -q 'location ~\* \^/clipsync/admin/assets' "$f" 2>/dev/null || \
+       $SUDO grep -q 'alias /app/ClipSync/server/admin/web' "$f" 2>/dev/null || \
+       $SUDO grep -q 'alias /app/Clipsync/admin/web' "$f" 2>/dev/null; then
+      echo "  → 修复 $f 中的静态文件 location 块"
+      $SUDO cp "$f" "${f}.bak.$(date +%s)"
+      # 用 awk 删除从旧注释到闭合大括号的整块
+      $SUDO awk '
+        /# ── Admin 前端静态文件/ { skip=1; depth=0; next }
+        skip {
+          n=gsub(/{/,"{"); depth+=n
+          n=gsub(/}/,"}"); depth-=n
+          if (depth<=0 && /}/) { skip=0; next }
+          next
+        }
+        { print }
+      ' "$f" | $SUDO tee "${f}.new" > /dev/null
+      # 在 WebSocket 注释行前插入新配置
+      echo "$STATIC_BLOCK" | $SUDO tee /tmp/_clipsync_static_block > /dev/null
+      $SUDO awk '
+        /# ── ClipSync Server WebSocket/ && !done {
+          while ((getline line < "/tmp/_clipsync_static_block") > 0) print line
+          done=1
+        }
+        { print }
+      ' "${f}.new" | $SUDO tee "$f" > /dev/null
+      $SUDO rm -f "${f}.new" /tmp/_clipsync_static_block
     fi
   fi
 done
-if [ "$NGINX_CHECKED" = "1" ] && $SUDO nginx -t 2>/dev/null; then
+
+if $SUDO nginx -t 2>/dev/null; then
   $SUDO nginx -s reload && echo "==> nginx 已 reload"
 else
-  echo "==> 参考配置：/tmp/clipsync-admin-deploy/deploy/nginx.clipsync.conf"
+  echo "⚠ nginx -t 失败，请手动检查 /etc/nginx/conf.d/"
 fi
 rm -rf /tmp/clipsync-admin-deploy
