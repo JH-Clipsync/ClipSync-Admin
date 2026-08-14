@@ -156,7 +156,16 @@ server:
 EOF
 }
 
-if [ ! -f "$CFG" ] || ! $SUDO head -1 "$CFG" | grep -q '^app:'; then
+# 检测配置是否被之前有 bug 的迁移脚本改坏（redis.addr 被误改成 http URL）
+CFG_BROKEN=0
+if [ -f "$CFG" ] && $SUDO head -1 "$CFG" | grep -q '^app:'; then
+  if $SUDO awk '/^redis:/{f=1;next} f&&/^[a-zA-Z]/{f=0} f&&/addr:/{if($0 ~ /http:\/\//) exit 0} END{exit 1}' "$CFG"; then
+    echo "==> 检测到 config.yaml 已损坏（redis.addr 被误改），将重新生成"
+    CFG_BROKEN=1
+  fi
+fi
+
+if [ ! -f "$CFG" ] || ! $SUDO head -1 "$CFG" | grep -q '^app:' || [ "$CFG_BROKEN" = "1" ]; then
   if [ -f "$CFG" ]; then
     echo "==> 旧的 config.yaml 已损坏，备份并重新生成"
     $SUDO cp "$CFG" "${CFG}.bak.$(date +%s)"
@@ -176,10 +185,14 @@ else
   if $SUDO grep -qE '^[[:space:]]*addr:[[:space:]]*":18082"' "$CFG"; then
     $SUDO sed -i -E 's|^([[:space:]]*addr:[[:space:]]*)":18082"|\1":28002"|' "$CFG"
   fi
-  # 迁移旧的外网 server.addr 为容器内直连地址
+  # 迁移旧的外网 server.addr 为容器内直连地址（只改 server: 段下的 addr）
   if $SUDO grep -qE 'addr:[[:space:]]*"https?://[^"]*95qw[^"]*"' "$CFG"; then
     echo "==> 迁移 server.addr 为容器内直连地址 http://127.0.0.1:28001"
-    $SUDO sed -i -E 's|^(  addr:).*|\1 "http://127.0.0.1:28001"|' "$CFG"
+    $SUDO awk '
+      /^[a-zA-Z_]/ { cur=$1; sub(/:$/,"",cur) }
+      cur=="server" && /^[[:space:]]+addr:/ { print "  addr: \"http://127.0.0.1:28001\""; next }
+      { print }
+    ' "$CFG" | $SUDO tee "${CFG}.tmp" > /dev/null && $SUDO mv "${CFG}.tmp" "$CFG"
   fi
 fi
 
