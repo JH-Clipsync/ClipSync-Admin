@@ -42,7 +42,7 @@ COPY --from=builder /src/config.example.yaml /app/config.example.yaml
 VOLUME ["/data/uploads"]
 
 # 管理后端端口（与 config.example.yaml 默认值保持一致）
-EXPOSE 18082
+EXPOSE 28002
 
 # 启动时从 /data/config/config.yaml 加载；找不到就用代码默认值
 ENV CLIPSYNC_ADMIN_CONFIG=/data/config/config.yaml

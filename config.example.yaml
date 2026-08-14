@@ -1,6 +1,6 @@
 app:
   name: clipsync-admin
-  addr: ":18082"
+  addr: ":28002"
   mode: debug
 
 mysql:
@@ -59,5 +59,5 @@ server:
   # 频道名 = key_prefix + "admin:kick_user"。
   key_prefix: "clipsync:"
   # HTTP 兜底：Redis Pub/Sub 失败时再调用一次。不填则只有 Redis 通道。
-  # addr: "http://127.0.0.1:8080"
+  # addr: "http://127.0.0.1:28001"
   # http_admin_token: ""

@@ -36,7 +36,7 @@ go run .
 go run . -c /path/to/config.yaml
 ```
 
-默认监听 `:18082`，超级管理员账号 `admin` / `Admin**8`。
+默认监听 `:28002`，超级管理员账号 `admin` / `Admin**8`。
 
 ## 配置
 

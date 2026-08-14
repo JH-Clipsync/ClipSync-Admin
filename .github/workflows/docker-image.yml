@@ -86,14 +86,14 @@ jobs:
           sleep 20
           echo "等待 latest 标签在 GHCR 各边缘节点生效..."
 
-      - name: 通过 scp 上传 docker-compose.yml / .env.example
+      - name: 通过 scp 上传 docker-compose.yml / .env.example / config.example.yaml
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
           username: ${{ secrets.DEPLOY_SSH_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
-          source: "deploy/docker-compose.yml,deploy/.env.example"
+          source: "deploy/docker-compose.yml,deploy/.env.example,config.example.yaml"
           target: "/tmp/clipsync-admin-deploy"
           overwrite: true
 
@@ -127,7 +127,31 @@ jobs:
               echo "⚠ 已生成 .env 模板：$DEPLOY_DIR/.env"
             fi
 
+            # 把已存在 config.yaml 中的旧默认端口 :18082 迁移到 :28002（只匹配精确值，不误改自定义端口）
+            if [ -f "$DEPLOY_DIR/config/config.yaml" ]; then
+              if sudo grep -qE '^\s*addr:\s*":18082"' "$DEPLOY_DIR/config/config.yaml"; then
+                sudo sed -i -E 's|^(\s*addr:\s*)":18082"|\1":28002"|' "$DEPLOY_DIR/config/config.yaml"
+                echo "已将 config.yaml 中 app.addr 从 :18082 迁移到 :28002"
+              fi
+              # 同时把 server.addr 兜底注释里的 :8080 更新为 :28001（仅注释）
+              sudo sed -i -E 's|http://127\.0\.0\.1:8080|http://127.0.0.1:28001|g' "$DEPLOY_DIR/config/config.yaml" 2>/dev/null || true
+            else
+              echo "⚠ $DEPLOY_DIR/config/config.yaml 不存在；已从 example 拷贝，请编辑后重启："
+              sudo cp /tmp/clipsync-admin-deploy/config.example.yaml "$DEPLOY_DIR/config/config.yaml"
+              echo "  sudo vi $DEPLOY_DIR/config/config.yaml"
+            fi
+
             cd "$DEPLOY_DIR"
+
+            # 迁移 .env 中旧默认值（80→28200，18082→28002）；用户自定义过的不会被改
+            if sudo grep -qE '^WEB_PORT=80$' .env 2>/dev/null; then
+              sudo sed -i 's/^WEB_PORT=80$/WEB_PORT=28200/' .env
+              echo "已将 .env 中 WEB_PORT 从 80 迁移到 28200"
+            fi
+            if sudo grep -q 'host.docker.internal:18082' .env 2>/dev/null; then
+              sudo sed -i 's/host.docker.internal:18082/host.docker.internal:28002/g' .env
+              echo "已将 .env 中 ADMIN_UPSTREAM 从 18082 迁移到 28002"
+            fi
 
             # 部署统一使用 latest 标签（和 version tag 指向同一个镜像）
             sudo sed -i '/^ADMIN_TAG=/d;/^WEB_TAG=/d' .env

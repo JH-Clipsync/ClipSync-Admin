@@ -73,7 +73,7 @@ type ServerConfig struct {
 	// KeyPrefix 与 ClipSync-Server 的 redis.key_prefix 保持一致（默认 "clipsync:"）。
 	// 决定 Pub/Sub 频道名；频道名 = KeyPrefix + "admin:kick_user"。
 	KeyPrefix string `mapstructure:"key_prefix"`
-	// Addr ClipSync-Server 的 HTTP 监听地址（如 "http://127.0.0.1:8080"）。
+	// Addr ClipSync-Server 的 HTTP 监听地址（如 "http://127.0.0.1:28001"）。
 	// 不为空时，若 Redis Pub/Sub 下发失败则走 HTTP 兜底。
 	Addr string `mapstructure:"addr"`
 	// HTTPAdminToken 走 HTTP 兜底时的 Bearer Token（Server 侧自行校验）。
