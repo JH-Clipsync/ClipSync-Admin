@@ -1,0 +1,45 @@
+name: Diagnose Server
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH 诊断
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          script_stop: false
+          script: |
+            echo "===== whoami ====="
+            whoami; id
+            echo "===== /app/Clipsync 目录 ====="
+            ls -la /app/Clipsync/ 2>/dev/null || echo "不存在"
+            find /app/Clipsync -maxdepth 3 -name "*.yaml" -o -name "*.yml" -o -name "*.conf" 2>/dev/null | head -40
+            echo "===== docker ps ====="
+            sudo docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}" 2>/dev/null || docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}"
+            echo "===== nginx 是否安装 ====="
+            which nginx 2>/dev/null && nginx -v 2>&1 || echo "无 nginx"
+            which caddy 2>/dev/null && caddy version 2>/dev/null || echo "无 caddy"
+            echo "===== nginx 配置目录 ====="
+            ls -la /etc/nginx/conf.d/ 2>/dev/null | head -20
+            ls -la /etc/nginx/sites-enabled/ 2>/dev/null | head -20
+            grep -rn "95qw\|clipsync\|proxy_pass" /etc/nginx/ 2>/dev/null | head -30
+            echo "===== 监听端口 ====="
+            sudo ss -tlnp 2>/dev/null | grep -E ":80|:443|:2800|:3306|:5000|:6379|nginx|caddy|clipsync" | head -20
+            echo "===== clipsync 相关进程 ====="
+            ps aux | grep -iE "nginx|caddy|clipsync" | grep -v grep | head -20
+            echo "===== /opt 下是否有旧部署 ====="
+            ls -la /opt/clipsync* 2>/dev/null || true
+            echo "===== 找所有 clipsync 相关 config.yaml ====="
+            find / -name "config.yaml" -path "*clipsync*" 2>/dev/null | head -20
+            echo "===== MySQL 容器信息 ====="
+            sudo docker ps --format "{{.Names}}\t{{.Image}}\t{{.Ports}}" 2>/dev/null | grep -iE "mysql|maria|redis" || true
