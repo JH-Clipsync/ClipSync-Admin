@@ -1,0 +1,27 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.iml
+
+# Go 编译产物
+config.yaml
+/clipsync-admin
+/admin
+/server
+/bin/
+*.log
+logs/
+
+# 上传文件
+data/uploads/*
+!data/uploads/.gitkeep
+
+# Env
+.env
+.env.local
+.env.*.local

@@ -1,0 +1,63 @@
+app:
+  name: clipsync-admin
+  addr: ":18082"
+  mode: debug
+
+mysql:
+  dsn: "clipsync:clipsync@tcp(127.0.0.1:3306)/clipsync?charset=utf8mb4&parseTime=True&loc=Local"
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 2
+
+jwt:
+  secret: "change-me-clipsync-admin-secret"
+  header: "Authorization"
+  scheme: "Bearer"
+  ttl: 7200
+  refresh_on_access: true
+
+security:
+  bcrypt_cost: 10
+  login_error_limit: 5
+  login_error_ttl: 900
+  # 登录前签名密钥（登录接口本身用此密钥校验）。
+  # 前端硬编码同一字符串，登录成功后切换为动态下发的 signSecret。
+  sign_static_secret: "clipsync-admin-static-sign-secret-v1"
+
+cors:
+  allow_origins:
+    - "http://localhost:5175"
+    - "http://127.0.0.1:5175"
+  allow_credentials: true
+
+log:
+  level: "info"
+  format: "console"
+
+bootstrap:
+  super_admin_account: "admin"
+  super_admin_password: "Admin**8"
+  super_admin_name: "超级管理员"
+
+upload:
+  dir: "./data/uploads"
+  url_prefix: "/static"
+  max_size: 10485760
+  allow_ext: [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+
+# 与 ClipSync-Server 联动的通道配置。
+# 管理端"重置用户密码/禁用用户/删除用户"时需要通知 Server 强制下线该用户所有连接。
+# 默认走 Redis Pub/Sub（两边共享同一 Redis 实例时，零配置、最稳定）；
+# 若两边不共享 Redis，可填 server.addr 走 HTTP 兜底。
+server:
+  # 与 ClipSync-Server 的 redis.key_prefix 保持一致（默认 "clipsync:"）。
+  # 频道名 = key_prefix + "admin:kick_user"。
+  key_prefix: "clipsync:"
+  # HTTP 兜底：Redis Pub/Sub 失败时再调用一次。不填则只有 Redis 通道。
+  # addr: "http://127.0.0.1:8080"
+  # http_admin_token: ""

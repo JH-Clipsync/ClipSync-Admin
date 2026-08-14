@@ -1,0 +1,168 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/clipsync/admin/internal/config"
+	"github.com/go-redis/redis/v8"
+	"go.uber.org/zap"
+)
+
+// AdminAction 与 ClipSync-Server 端约定的控制动作，保持字符串一致。
+type AdminAction string
+
+const (
+	ActionKickUser      AdminAction = "kick_user"
+	ActionKickDevice    AdminAction = "kick_device"
+	ActionDisableDevice AdminAction = "disable_device"
+	ActionEnableDevice  AdminAction = "enable_device"
+)
+
+// Kick reason：与 Server 端 kickPayload.Reason 约定一致。
+const (
+	ReasonPasswordReset = "password_reset"
+	ReasonUserDisabled  = "user_disabled"
+	ReasonUserDeleted   = "user_deleted"
+	ReasonDeviceKicked  = "device_kicked"
+	ReasonDeviceBanned  = "device_banned"
+)
+
+// AdminCommand 管理端发给 ClipSync-Server 的一条控制指令。
+type AdminCommand struct {
+	Action   AdminAction `json:"action"`
+	UserID   int64       `json:"user_id"`
+	DeviceID string      `json:"device_id,omitempty"`
+	Reason   string      `json:"reason,omitempty"`
+}
+
+// ServerNotifier 向 ClipSync-Server 下发控制指令（强制下线 / 设备禁用等）。
+// 主通道 Redis Pub/Sub；server.addr 配置不为空时走 HTTP 兜底。
+type ServerNotifier struct {
+	cfg    config.ServerConfig
+	rdb    *redis.Client
+	logger *zap.Logger
+	cli    *http.Client
+}
+
+func NewServerNotifier(cfg config.ServerConfig, rdb *redis.Client, logger *zap.Logger) *ServerNotifier {
+	return &ServerNotifier{
+		cfg:    cfg,
+		rdb:    rdb,
+		logger: logger,
+		cli:    &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func (n *ServerNotifier) channel() string {
+	prefix := n.cfg.KeyPrefix
+	if prefix == "" {
+		prefix = "clipsync:"
+	}
+	return prefix + "admin:kick_user"
+}
+
+// sendCommand 先尝试 Redis Pub/Sub，失败再走 HTTP 兜底（如果配置了 addr）。
+func (n *ServerNotifier) sendCommand(ctx context.Context, cmd AdminCommand) error {
+	ch := n.channel()
+	if n.rdb != nil {
+		data, _ := json.Marshal(cmd)
+		if err := n.rdb.Publish(ctx, ch, data).Err(); err == nil {
+			n.logger.Info("notify server via redis",
+				zap.String("action", string(cmd.Action)),
+				zap.Int64("user_id", cmd.UserID),
+				zap.String("device_id", cmd.DeviceID),
+				zap.String("channel", ch),
+			)
+			return nil
+		} else {
+			n.logger.Warn("notify server via redis failed, fallback to http",
+				zap.String("action", string(cmd.Action)),
+				zap.Int64("user_id", cmd.UserID),
+				zap.Error(err),
+			)
+		}
+	}
+	if n.cfg.Addr == "" {
+		return fmt.Errorf("notify server failed: redis down and server.addr not configured")
+	}
+	return n.commandViaHTTP(ctx, cmd)
+}
+
+// KickUser 通知 Server 强制下线 userID 下的所有连接。
+func (n *ServerNotifier) KickUser(ctx context.Context, userID int64, reason string) error {
+	if reason == "" {
+		reason = ReasonPasswordReset
+	}
+	return n.sendCommand(ctx, AdminCommand{
+		Action: ActionKickUser,
+		UserID: userID,
+		Reason: reason,
+	})
+}
+
+// KickDevice 只踢某用户下的一台设备，其他端不受影响。
+func (n *ServerNotifier) KickDevice(ctx context.Context, userID int64, deviceID, reason string) error {
+	if reason == "" {
+		reason = ReasonDeviceKicked
+	}
+	return n.sendCommand(ctx, AdminCommand{
+		Action:   ActionKickDevice,
+		UserID:   userID,
+		DeviceID: deviceID,
+		Reason:   reason,
+	})
+}
+
+// SetDeviceStatus 启用/禁用某用户下的一台设备。禁用时 Server 会顺手踢它下线。
+func (n *ServerNotifier) SetDeviceStatus(ctx context.Context, userID int64, deviceID string, disabled bool, reason string) error {
+	action := ActionEnableDevice
+	if disabled {
+		action = ActionDisableDevice
+		if reason == "" {
+			reason = ReasonDeviceBanned
+		}
+	}
+	return n.sendCommand(ctx, AdminCommand{
+		Action:   action,
+		UserID:   userID,
+		DeviceID: deviceID,
+		Reason:   reason,
+	})
+}
+
+// commandViaHTTP HTTP 兜底。Server 端 /admin/kick 支持全动作。
+func (n *ServerNotifier) commandViaHTTP(ctx context.Context, cmd AdminCommand) error {
+	body, _ := json.Marshal(cmd)
+	url := n.cfg.Addr + "/admin/kick"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if n.cfg.HTTPAdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+n.cfg.HTTPAdminToken)
+	}
+	resp, err := n.cli.Do(req)
+	if err != nil {
+		return fmt.Errorf("notify server via http: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("notify server via http: status=%d body=%s", resp.StatusCode, string(respBody))
+	}
+	n.logger.Info("notify server via http",
+		zap.String("action", string(cmd.Action)),
+		zap.Int64("user_id", cmd.UserID),
+		zap.String("device_id", cmd.DeviceID),
+		zap.String("url", url),
+		zap.Int("status", resp.StatusCode),
+	)
+	return nil
+}
