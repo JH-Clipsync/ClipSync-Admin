@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
-# ClipSync Admin 自动部署脚本（由 GitHub Actions 通过 SSH 执行）
+# ClipSync Admin 后端自动部署脚本（由 GitHub Actions 通过 SSH 执行）
 set -euo pipefail
 
 DEPLOY_DIR="${DEPLOY_DIR:-/app/Clipsync/admin}"
 VERSION="${VERSION:?VERSION is required}"
-# Server 配置可能所在的路径（按优先级）
 SERVER_CFG_CANDIDATES=(
   "/app/Clipsync/server/config.yaml"
   "/app/Clipsync/server/config.yml"
   "/app/Clipsync/config.yaml"
-  "/opt/clipsync/config.yaml"
-  "/opt/clipsync-server/config.yaml"
 )
 
 echo "==> whoami: $(whoami)"
@@ -30,17 +27,15 @@ $SUDO mkdir -p "$DEPLOY_DIR/config" "$DEPLOY_DIR/uploads"
 # 每次 CI 都更新 docker-compose.yml
 $SUDO cp /tmp/clipsync-admin-deploy/deploy/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
 
-# 首次部署：拷贝 .env 模板
-if [ ! -f "$DEPLOY_DIR/.env" ]; then
-  $SUDO cp /tmp/clipsync-admin-deploy/deploy/.env.example "$DEPLOY_DIR/.env"
-  echo "⚠ 已生成 .env 模板：$DEPLOY_DIR/.env"
+# 清理旧的 web 容器（之前用容器跑前端，现在改为静态部署）
+if $SUDO docker ps -a --format '{{.Names}}' | grep -q '^clipsync-admin-web$'; then
+  echo "==> 删除旧的 clipsync-admin-web 容器（前端已改为静态部署）"
+  $SUDO docker rm -f clipsync-admin-web >/dev/null 2>&1 || true
 fi
 
 # ── config.yaml 自动生成/迁移 ──────────────────────────────────
 CFG="$DEPLOY_DIR/config/config.yaml"
 
-# 从 Server config.yaml 的指定段里提取标量值（兼容 gawk/mawk/busybox awk）
-# 用法：cfg_get <file> <section> <key>
 cfg_get() {
   local file="$1" section="$2" key="$3"
   awk -v sec="$section" -v k="$key" '
@@ -90,11 +85,10 @@ gen_config() {
   KEY_PREFIX="${key_prefix:-clipsync:}"
   ADMIN_TOKEN="${admin_token:-}"
 
-  # 生成随机密钥（首次）
   local jwt_secret
   jwt_secret=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
 
-  echo "==> 从 $server_cfg 读取到数据库配置：mysql=${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DB}, redis=${REDIS_ADDR}"
+  echo "==> 从 $server_cfg 读取：mysql=${MYSQL_USER}@${MYSQL_HOST}:${MYSQL_PORT}/${MYSQL_DB}, redis=${REDIS_ADDR}"
 
   cat <<EOF
 # ClipSync-Admin 配置（由 deploy.sh 自动生成）
@@ -128,12 +122,9 @@ logs:
   max_age: 30
   stdout: true
 
-# 与 ClipSync-Server 联动：踢用户/踢设备/封禁用户时通知 Server 强制下线
 server:
   key_prefix: "${KEY_PREFIX}"
-  # 通过外层反向代理调用 Server /admin/kick 接口
   addr: "https://www.95qw.com/clipsync"
-  # 与 Server 端 server.admin_token 保持一致
   http_admin_token: "${ADMIN_TOKEN}"
 
 upload:
@@ -160,46 +151,29 @@ if [ ! -f "$CFG" ]; then
     echo "==> 找到 Server 配置：$SERVER_CFG，自动生成 admin config.yaml"
     gen_config "$SERVER_CFG" | $SUDO tee "$CFG" > /dev/null
   else
-    echo "============================================================"
-    echo "⚠ 未找到 ClipSync-Server 的 config.yaml，无法自动生成配置。"
-    echo "  请手动创建：$CFG"
-    echo "  可参考仓库 config.example.yaml"
-    echo "  配置完成后执行：cd $DEPLOY_DIR && sudo docker compose restart admin"
-    echo "============================================================"
-    $SUDO cp /tmp/clipsync-admin-deploy/config.example.yaml "$CFG"
+    echo "⚠ 未找到 Server config.yaml，请手动创建 $CFG"
   fi
 else
-  # 已存在：把旧默认端口 :18082 迁移到 :28002
   if $SUDO grep -qE '^[[:space:]]*addr:[[:space:]]*":18082"' "$CFG"; then
     $SUDO sed -i -E 's|^([[:space:]]*addr:[[:space:]]*)":18082"|\1":28002"|' "$CFG"
-    echo "已将 app.addr 从 :18082 迁移到 :28002"
-  fi
-  # 把 server.addr 从本地地址更新为线上域名（如果还是旧值）
-  if $SUDO grep -qE '^[[:space:]]*addr:[[:space:]]*"http://127\.0\.0\.1:28001"' "$CFG"; then
-    $SUDO sed -i -E 's|http://127\.0\.0\.1:28001|https://www.95qw.com/clipsync|g' "$CFG"
-    echo "已将 server.addr 更新为 https://www.95qw.com/clipsync"
   fi
 fi
 
 cd "$DEPLOY_DIR"
 
-# 清理旧的 tag 行，统一用 latest
-$SUDO sed -i '/^ADMIN_TAG=/d;/^WEB_TAG=/d' .env
+# 用 latest 标签
+$SUDO sed -i '/^ADMIN_TAG=/d' .env 2>/dev/null || true
 echo "ADMIN_TAG=latest" | $SUDO tee -a .env > /dev/null
-echo "WEB_TAG=latest"   | $SUDO tee -a .env > /dev/null
 
 # 清除过期 GHCR 凭据
 $SUDO docker logout ghcr.io >/dev/null 2>&1 || true
 
-# 拉取镜像
-echo "==> docker compose pull..."
-$SUDO docker compose pull admin web
+# 拉取并启动
+echo "==> docker compose pull admin..."
+$SUDO docker compose pull admin
+echo "==> docker compose up -d admin..."
+$SUDO docker compose up -d admin
 
-# 启动
-echo "==> docker compose up -d..."
-$SUDO docker compose up -d admin web
-
-# 清理
 $SUDO docker image prune -f || true
 rm -rf /tmp/clipsync-admin-deploy
 

@@ -1,13 +1,12 @@
-# ClipSync Admin 部署编排
+# ClipSync Admin 后端部署编排
+#
+# 前端（ClipSync-Admin-Web）为静态文件，部署在 /app/Clipsync/admin/web，
+# 由宿主机 nginx 直接托管，不使用容器。
 #
 # 首次部署：
-#   1. 在服务器创建目录：mkdir -p /opt/clipsync-admin/config /opt/clipsync-admin/uploads
-#   2. 手动创建 /opt/clipsync-admin/config/config.yaml（参考仓库 config.example.yaml）
-#      - mysql/redis 地址填 127.0.0.1（host 网络模式）
-#      - app.addr 用 ":28002"
-#      - 上传 url_prefix 建议改成 "/clipsync/admin/static"（配合外层反代）
-#   3. 复制 .env.example 为 .env 并按需修改
-#   4. docker compose up -d
+#   1. mkdir -p /app/Clipsync/admin/config /app/Clipsync/admin/uploads
+#   2. deploy.sh 会自动从 Server 配置读取 mysql/redis 信息生成 config.yaml
+#   3. docker compose up -d
 #
 # 更新镜像：
 #   docker compose pull && docker compose up -d
@@ -19,7 +18,7 @@ services:
     image: ghcr.io/jh-clipsync/clipsync-admin:${ADMIN_TAG:-latest}
     container_name: clipsync-admin
     restart: unless-stopped
-    # host 网络：直连宿主机 MySQL/Redis，来源 IP 为 127.0.0.1
+    # host 网络：直连宿主机 MySQL/Redis，监听 :28002
     network_mode: host
     command: ["-c", "/data/config/config.yaml"]
     volumes:
@@ -27,24 +26,6 @@ services:
       - ./uploads:/data/uploads
     environment:
       - TZ=Asia/Shanghai
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  web:
-    image: ghcr.io/jh-clipsync/clipsync-admin-web:${WEB_TAG:-latest}
-    container_name: clipsync-admin-web
-    restart: unless-stopped
-    depends_on:
-      - admin
-    ports:
-      - "${WEB_PORT:-28200}:80"
-    environment:
-      - TZ=Asia/Shanghai
-      # 生产环境由外层反代（Caddy/Nginx）处理 /clipsync/admin/api，
-      # 这里不设 ADMIN_UPSTREAM，容器内 nginx 只托管静态文件
     logging:
       driver: json-file
       options:
