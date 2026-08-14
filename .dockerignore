@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.iml
+
+# 编译产物
+clipsync-admin
+admin
+server
+bin/
+*.log
+logs/
+
+# 本地配置（镜像内不包含真实配置，由 volume 挂载）
+config.yaml
+
+# 上传文件（运行时数据，不打进镜像）
+data/uploads/*
+!data/uploads/.gitkeep
+
+# 文档
+README.md
+
+# Docker
+Dockerfile
+.dockerignore
