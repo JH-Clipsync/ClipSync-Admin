@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -60,10 +61,10 @@ jobs:
           echo "::notice::APP_VERSION=$VER"
 
       - name: Build and push (linux/amd64)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          # 只构建 amd64：绝大多数服务器为 x86_64，构建耗时从 ~10 分钟降到 ~2 分钟
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -83,6 +84,11 @@ jobs:
     steps:
       - name: 检出部署文件
         uses: actions/checkout@v4
+
+      - name: 等待 GHCR 镜像 manifest 全局传播（最多 30 秒）
+        run: |
+          sleep 15
+          echo "等待镜像 tag 在 GHCR 各边缘节点生效..."
 
       - name: 通过 scp 上传 docker-compose.yml / .env.example
         uses: appleboy/scp-action@v0.1.7
@@ -112,10 +118,11 @@ jobs:
 
             DEPLOY_DIR="${{ secrets.DEPLOY_ADMIN_DIR || '/opt/clipsync-admin' }}"
             VERSION="${{ needs.docker.outputs.version }}"
-            OWNER_LC=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
 
             echo "==> 部署目录: $DEPLOY_DIR"
             echo "==> 版本: $VERSION"
+            echo "==> 服务器架构: $(uname -m)"
+            echo "==> Docker 版本: $(docker --version)"
 
             sudo mkdir -p "$DEPLOY_DIR/config" "$DEPLOY_DIR/uploads"
 
@@ -125,28 +132,45 @@ jobs:
             # 首次部署时若 .env 不存在，从 example 拷贝
             if [ ! -f "$DEPLOY_DIR/.env" ]; then
               sudo cp /tmp/clipsync-admin-deploy/deploy/.env.example "$DEPLOY_DIR/.env"
-              echo "⚠ 已生成 .env 模板：$DEPLOY_DIR/.env（请按需修改，下次部署生效）"
+              echo "⚠ 已生成 .env 模板：$DEPLOY_DIR/.env"
             fi
 
             cd "$DEPLOY_DIR"
 
-            # 清理 .env 里的旧 ADMIN_TAG / WEB_TAG，再写入新版本（避免重复追加）
+            # 清理 .env 里的旧 ADMIN_TAG / WEB_TAG，再写入新版本
             sudo sed -i '/^ADMIN_TAG=/d;/^WEB_TAG=/d' .env
             echo "ADMIN_TAG=$VERSION" | sudo tee -a .env > /dev/null
             echo "WEB_TAG=$VERSION"   | sudo tee -a .env > /dev/null
 
-            # 登录 GHCR（GITHUB_TOKEN 对同组织包有 read 权限，避免匿名拉取 401）
+            # 先清除可能残留的错误缓存
+            sudo docker compose rm -f admin web 2>/dev/null || true
+
+            # 登录 GHCR
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
-            # 拉取两个镜像并重启
-            sudo docker compose pull admin web
+            # 诊断：先单独 pull admin 并查看详细错误
+            echo "==> 拉取 admin 镜像..."
+            if ! sudo docker pull "ghcr.io/jh-clipsync/clipsync-admin:$VERSION"; then
+              echo "❌ admin 镜像拉取失败，尝试用 latest 标签..."
+              sudo docker pull ghcr.io/jh-clipsync/clipsync-admin:latest
+            fi
+
+            echo "==> 拉取 web 镜像..."
+            if ! sudo docker pull "ghcr.io/jh-clipsync/clipsync-admin-web:$VERSION"; then
+              echo "❌ web 镜像拉取失败，尝试用 latest 标签..."
+              sudo docker pull ghcr.io/jh-clipsync/clipsync-admin-web:latest
+              # 如果用的 latest，.env 里的 tag 也要改
+              sudo sed -i "s/^WEB_TAG=.*/WEB_TAG=latest/" .env
+            fi
+
+            # 启动服务
             sudo docker compose up -d admin web
 
             # 清理悬空镜像
             sudo docker image prune -f || true
-
-            # 清理临时文件
             rm -rf /tmp/clipsync-admin-deploy
 
             echo "==> 部署完成，容器状态："
             sudo docker compose ps
+            echo "==> admin 日志（最后 20 行）："
+            sudo docker compose logs --tail=20 admin || true
