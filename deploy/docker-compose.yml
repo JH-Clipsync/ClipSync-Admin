@@ -1,0 +1,55 @@
+# ClipSync Admin 部署编排
+#
+# 首次部署：
+#   1. 在服务器创建目录：mkdir -p /opt/clipsync-admin/config /opt/clipsync-admin/uploads
+#   2. 把 config.yaml 放到 /opt/clipsync-admin/config/config.yaml
+#      （可参考仓库根目录 config.example.yaml；注意 mysql/redis 地址填宿主机 IP）
+#   3. 复制本目录下的 .env.example 为 .env 并按需修改
+#   4. docker compose up -d
+#
+# 更新镜像：
+#   docker compose pull && docker compose up -d
+
+name: clipsync-admin
+
+services:
+  admin:
+    image: ghcr.io/jh-clipsync/clipsync-admin:${ADMIN_TAG:-latest}
+    container_name: clipsync-admin
+    restart: unless-stopped
+    # 用 host 网络直连宿主机上的 MySQL/Redis（和 ClipSync-Server 一致）
+    network_mode: host
+    user: "0:0"
+    command: ["-c", "/data/config/config.yaml"]
+    volumes:
+      - ./config:/data/config:ro
+      - ./uploads:/data/uploads
+    environment:
+      - TZ=Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    image: ghcr.io/jh-clipsync/clipsync-admin-web:${WEB_TAG:-latest}
+    container_name: clipsync-admin-web
+    restart: unless-stopped
+    depends_on:
+      - admin
+    ports:
+      # 宿主机端口:容器端口；宿主机 80 被占用时改成 18080 等
+      - "${WEB_PORT:-80}:80"
+    environment:
+      - TZ=Asia/Shanghai
+      # 反代到宿主机上的 admin 后端（容器里访问宿主机的公网/内网 IP）
+      # Linux: host.docker.internal 需要 extra_hosts；macOS/Windows Docker Desktop 自带
+      - ADMIN_UPSTREAM=${ADMIN_UPSTREAM:-http://host.docker.internal:18082}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

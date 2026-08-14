@@ -14,8 +14,10 @@ permissions:
 
 jobs:
   docker:
-    name: Build & Push multi-arch image
+    name: Build & Push Admin image
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,3 +74,79 @@ jobs:
             APP_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # 只有打 tag 时才部署到服务器
+  deploy:
+    name: Deploy to server via SSH
+    needs: docker
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: 检出部署文件
+        uses: actions/checkout@v4
+
+      - name: 通过 scp 上传 docker-compose.yml / .env.example
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          source: "deploy/docker-compose.yml,deploy/.env.example"
+          target: "/tmp/clipsync-admin-deploy"
+          overwrite: true
+
+      - name: 通过 SSH 拉取镜像并重启
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          script_stop: true
+          envs: DEPLOY_DIR,VERSION,GHCR_PAT,GHCR_USERNAME
+          script: |
+            set -e
+
+            DEPLOY_DIR="${{ secrets.DEPLOY_ADMIN_DIR || '/opt/clipsync-admin' }}"
+            VERSION="${{ needs.docker.outputs.version }}"
+
+            echo "==> 部署目录: $DEPLOY_DIR"
+            echo "==> 版本: $VERSION"
+
+            sudo mkdir -p "$DEPLOY_DIR/config" "$DEPLOY_DIR/uploads"
+
+            # 用上传的文件覆盖 docker-compose.yml（每次 CI 都更新）
+            sudo cp /tmp/clipsync-admin-deploy/deploy/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
+
+            # 首次部署时若 .env 不存在，从 example 拷贝
+            if [ ! -f "$DEPLOY_DIR/.env" ]; then
+              sudo cp /tmp/clipsync-admin-deploy/deploy/.env.example "$DEPLOY_DIR/.env"
+              echo "⚠ 已生成 .env 模板：$DEPLOY_DIR/.env（请按需修改，下次部署生效）"
+            fi
+
+            cd "$DEPLOY_DIR"
+
+            # 清理 .env 里的旧 ADMIN_TAG / WEB_TAG，再写入新版本（避免重复追加）
+            sudo sed -i '/^ADMIN_TAG=/d;/^WEB_TAG=/d' .env
+            echo "ADMIN_TAG=$VERSION" | sudo tee -a .env > /dev/null
+            echo "WEB_TAG=$VERSION"   | sudo tee -a .env > /dev/null
+
+            # 登录 GHCR（public 镜像可跳过；私有镜像必须配置 GHCR_PAT）
+            if [ -n "${{ secrets.GHCR_PAT }}" ]; then
+              echo "${{ secrets.GHCR_PAT }}" | sudo docker login ghcr.io -u "${{ secrets.GHCR_USERNAME || github.actor }}" --password-stdin
+            fi
+
+            # 拉取两个镜像并重启
+            sudo docker compose pull admin web
+            sudo docker compose up -d admin web
+
+            # 清理悬空镜像
+            sudo docker image prune -f || true
+
+            # 清理临时文件
+            rm -rf /tmp/clipsync-admin-deploy
+
+            echo "==> 部署完成，容器状态："
+            sudo docker compose ps

@@ -82,6 +82,12 @@ func New(
 		rbacGroup.PUT("/users/:id/status", dataH.UpdateUserStatus)
 		rbacGroup.POST("/users/:id/reset-password", dataH.ResetUserPassword)
 		rbacGroup.DELETE("/users/:id", dataH.DeleteUser)
+		// 主动踢该用户所有设备下线（不改密码不禁用）
+		rbacGroup.POST("/users/:id/kick", dataH.KickUserNow)
+		// 设备管理：列出、启用/禁用、踢单台设备
+		rbacGroup.GET("/users/:id/devices", dataH.ListDevices)
+		rbacGroup.PUT("/users/:id/devices/:did", dataH.SetDeviceStatus)
+		rbacGroup.POST("/users/:id/devices/:did/kick", dataH.KickDevice)
 
 		// RBAC management
 		rbacGroup.GET("/rbac/admins", rbacH.ListAdmins)

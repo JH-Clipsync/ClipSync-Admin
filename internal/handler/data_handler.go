@@ -125,8 +125,8 @@ func (h *DataHandler) Dashboard(c *gin.Context) {
 
 // ---- Devices ----
 
-// kickUserNow POST /users/:id/kick 主动踢该用户全部设备下线
-func (h *DataHandler) kickUserNow(c *gin.Context) {
+// KickUserNow POST /users/:id/kick 主动踢该用户全部设备下线
+func (h *DataHandler) KickUserNow(c *gin.Context) {
 	if err := h.svc.KickUserNow(c.Request.Context(), int64P(c, "id")); err != nil {
 		respBiz(c, err)
 		return
@@ -134,8 +134,8 @@ func (h *DataHandler) kickUserNow(c *gin.Context) {
 	result.Success(c, nil)
 }
 
-// listDevices GET /users/:id/devices 列出该用户所有设备
-func (h *DataHandler) listDevices(c *gin.Context) {
+// ListDevices GET /users/:id/devices 列出该用户所有设备
+func (h *DataHandler) ListDevices(c *gin.Context) {
 	devices, err := h.svc.ListDevices(c.Request.Context(), int64P(c, "id"))
 	if err != nil {
 		respBiz(c, err)
@@ -148,8 +148,8 @@ type setDeviceStatusReq struct {
 	Disabled bool `json:"disabled"`
 }
 
-// setDeviceStatus PUT /users/:id/devices/:did 启用/禁用设备
-func (h *DataHandler) setDeviceStatus(c *gin.Context) {
+// SetDeviceStatus PUT /users/:id/devices/:did 启用/禁用设备
+func (h *DataHandler) SetDeviceStatus(c *gin.Context) {
 	var req setDeviceStatusReq
 	if !bindOrFail(c, &req) {
 		return
@@ -166,8 +166,8 @@ func (h *DataHandler) setDeviceStatus(c *gin.Context) {
 	result.Success(c, nil)
 }
 
-// kickDevice POST /users/:id/devices/:did/kick 主动踢该设备下线
-func (h *DataHandler) kickDevice(c *gin.Context) {
+// KickDevice POST /users/:id/devices/:did/kick 主动踢该设备下线
+func (h *DataHandler) KickDevice(c *gin.Context) {
 	deviceID := c.Param("did")
 	if deviceID == "" {
 		result.Fail(c, result.CodeParamError)
