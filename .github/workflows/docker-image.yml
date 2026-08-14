@@ -105,73 +105,77 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
           script_stop: true
+          envs: DEPLOY_DIR,VERSION
           script: |
-            set -e
+            export DEPLOY_DIR="${{ secrets.DEPLOY_ADMIN_DIR || '/opt/clipsync-admin' }}"
+            export VERSION="${{ needs.docker.outputs.version }}"
+            bash -c '
+              set -ex
+              echo "==> whoami: $(whoami)"
+              echo "==> 部署目录: $DEPLOY_DIR"
+              echo "==> 版本: $VERSION"
+              echo "==> 服务器架构: $(uname -m)"
+              echo "==> Docker 版本: $(docker --version)"
 
-            DEPLOY_DIR="${{ secrets.DEPLOY_ADMIN_DIR || '/opt/clipsync-admin' }}"
-            VERSION="${{ needs.docker.outputs.version }}"
+              # 如果已经是 root 就不用 sudo；否则用 sudo
+              if [ "$(id -u)" = "0" ]; then SUDO=""; else SUDO="sudo"; fi
+              echo "==> 使用前缀: ${SUDO:-（无）}"
 
-            echo "==> 部署目录: $DEPLOY_DIR"
-            echo "==> 版本: $VERSION"
-            echo "==> 服务器架构: $(uname -m)"
-            echo "==> Docker 版本: $(docker --version)"
+              $SUDO mkdir -p "$DEPLOY_DIR/config" "$DEPLOY_DIR/uploads"
 
-            sudo mkdir -p "$DEPLOY_DIR/config" "$DEPLOY_DIR/uploads"
+              # 用上传的文件覆盖 docker-compose.yml（每次 CI 都更新）
+              $SUDO cp /tmp/clipsync-admin-deploy/deploy/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
 
-            # 用上传的文件覆盖 docker-compose.yml（每次 CI 都更新）
-            sudo cp /tmp/clipsync-admin-deploy/deploy/docker-compose.yml "$DEPLOY_DIR/docker-compose.yml"
-
-            # 首次部署时若 .env 不存在，从 example 拷贝
-            if [ ! -f "$DEPLOY_DIR/.env" ]; then
-              sudo cp /tmp/clipsync-admin-deploy/deploy/.env.example "$DEPLOY_DIR/.env"
-              echo "⚠ 已生成 .env 模板：$DEPLOY_DIR/.env"
-            fi
-
-            # 把已存在 config.yaml 中的旧默认端口 :18082 迁移到 :28002（只匹配精确值，不误改自定义端口）
-            if [ -f "$DEPLOY_DIR/config/config.yaml" ]; then
-              if sudo grep -qE '^\s*addr:\s*":18082"' "$DEPLOY_DIR/config/config.yaml"; then
-                sudo sed -i -E 's|^(\s*addr:\s*)":18082"|\1":28002"|' "$DEPLOY_DIR/config/config.yaml"
-                echo "已将 config.yaml 中 app.addr 从 :18082 迁移到 :28002"
+              # 首次部署时若 .env 不存在，从 example 拷贝
+              if [ ! -f "$DEPLOY_DIR/.env" ]; then
+                $SUDO cp /tmp/clipsync-admin-deploy/deploy/.env.example "$DEPLOY_DIR/.env"
+                echo "⚠ 已生成 .env 模板：$DEPLOY_DIR/.env"
               fi
-              # 同时把 server.addr 兜底注释里的 :8080 更新为 :28001（仅注释）
-              sudo sed -i -E 's|http://127\.0\.0\.1:8080|http://127.0.0.1:28001|g' "$DEPLOY_DIR/config/config.yaml" 2>/dev/null || true
-            else
-              echo "⚠ $DEPLOY_DIR/config/config.yaml 不存在；已从 example 拷贝，请编辑后重启："
-              sudo cp /tmp/clipsync-admin-deploy/config.example.yaml "$DEPLOY_DIR/config/config.yaml"
-              echo "  sudo vi $DEPLOY_DIR/config/config.yaml"
-            fi
 
-            cd "$DEPLOY_DIR"
+              # config.yaml 迁移逻辑
+              if [ -f "$DEPLOY_DIR/config/config.yaml" ]; then
+                if $SUDO grep -qE "^\s*addr:\s*\":18082\"" "$DEPLOY_DIR/config/config.yaml"; then
+                  $SUDO sed -i -E "s|^(\s*addr:\s*)\":18082\"|\1\":28002\"|" "$DEPLOY_DIR/config/config.yaml"
+                  echo "已将 config.yaml 中 app.addr 从 :18082 迁移到 :28002"
+                fi
+                $SUDO sed -i -E "s|http://127\.0\.0\.1:8080|http://127.0.0.1:28001|g" "$DEPLOY_DIR/config/config.yaml" 2>/dev/null || true
+              else
+                echo "⚠ $DEPLOY_DIR/config/config.yaml 不存在；已从 example 拷贝，请编辑后重启："
+                $SUDO cp /tmp/clipsync-admin-deploy/config.example.yaml "$DEPLOY_DIR/config/config.yaml"
+                echo "  sudo vi $DEPLOY_DIR/config/config.yaml"
+              fi
 
-            # 迁移 .env 中旧默认值（80→28200，18082→28002）；用户自定义过的不会被改
-            if sudo grep -qE '^WEB_PORT=80$' .env 2>/dev/null; then
-              sudo sed -i 's/^WEB_PORT=80$/WEB_PORT=28200/' .env
-              echo "已将 .env 中 WEB_PORT 从 80 迁移到 28200"
-            fi
-            if sudo grep -q 'host.docker.internal:18082' .env 2>/dev/null; then
-              sudo sed -i 's/host.docker.internal:18082/host.docker.internal:28002/g' .env
-              echo "已将 .env 中 ADMIN_UPSTREAM 从 18082 迁移到 28002"
-            fi
+              cd "$DEPLOY_DIR"
 
-            # 部署统一使用 latest 标签（和 version tag 指向同一个镜像）
-            sudo sed -i '/^ADMIN_TAG=/d;/^WEB_TAG=/d' .env
-            echo "ADMIN_TAG=latest" | sudo tee -a .env > /dev/null
-            echo "WEB_TAG=latest"   | sudo tee -a .env > /dev/null
+              # 迁移 .env 中旧默认值
+              if $SUDO grep -qE "^WEB_PORT=80$" .env 2>/dev/null; then
+                $SUDO sed -i "s/^WEB_PORT=80$/WEB_PORT=28200/" .env
+                echo "已将 .env 中 WEB_PORT 从 80 迁移到 28200"
+              fi
+              if $SUDO grep -q "host.docker.internal:18082" .env 2>/dev/null; then
+                $SUDO sed -i "s/host.docker.internal:18082/host.docker.internal:28002/g" .env
+                echo "已将 .env 中 ADMIN_UPSTREAM 从 18082 迁移到 28002"
+              fi
 
-            # 清除之前可能残留的过期 GHCR 凭据，避免 public 镜像拉取被 denied
-            sudo docker logout ghcr.io >/dev/null 2>&1 || true
+              # 部署统一使用 latest 标签
+              $SUDO sed -i "/^ADMIN_TAG=/d;/^WEB_TAG=/d" .env
+              echo "ADMIN_TAG=latest" | $SUDO tee -a .env > /dev/null
+              echo "WEB_TAG=latest"   | $SUDO tee -a .env > /dev/null
 
-            # 镜像为 public，无需 docker login；直接拉取
-            # 拉取最新镜像并重启
-            sudo docker compose pull admin web
-            sudo docker compose up -d admin web
+              # 清除之前可能残留的过期 GHCR 凭据
+              $SUDO docker logout ghcr.io >/dev/null 2>&1 || true
 
-            # 清理悬空镜像
-            sudo docker image prune -f || true
-            rm -rf /tmp/clipsync-admin-deploy
+              # 拉取最新镜像并重启
+              $SUDO docker compose pull admin web
+              $SUDO docker compose up -d admin web
 
-            echo "==> 部署完成，容器状态："
-            sudo docker compose ps
-            echo ""
-            echo "==> admin 日志（最后 20 行）："
-            sudo docker compose logs --tail=20 admin || true
+              # 清理悬空镜像
+              $SUDO docker image prune -f || true
+              rm -rf /tmp/clipsync-admin-deploy
+
+              echo "==> 部署完成，容器状态："
+              $SUDO docker compose ps
+              echo ""
+              echo "==> admin 日志（最后 20 行）："
+              $SUDO docker compose logs --tail=20 admin || true
+            '
