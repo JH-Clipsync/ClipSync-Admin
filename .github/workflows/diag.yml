@@ -1,0 +1,28 @@
+name: Diagnose
+
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_SSH_HOST }}
+          username: ${{ secrets.DEPLOY_SSH_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
+          script_stop: false
+          script: |
+            MPASS='Clipsync**8'
+            echo "===MYSQL_DEVICES==="
+            sudo docker exec mysql8 mysql -uclipsync -p"$MPASS" clipsync -e "SELECT user_id,device_id,role,platform,disabled,last_seen_at FROM devices;" 2>&1 | grep -v "Warning"
+            echo "===MYSQL_USERS==="
+            sudo docker exec mysql8 mysql -uclipsync -p"$MPASS" clipsync -e "SELECT id,username,disabled FROM users;" 2>&1 | grep -v "Warning"
+            echo "===MYSQL_TABLES==="
+            sudo docker exec mysql8 mysql -uclipsync -p"$MPASS" clipsync -e "SHOW TABLES;" 2>&1 | grep -v "Warning"
+            echo "===ADMIN_LOGS==="
+            sudo docker logs --tail 20 clipsync-admin 2>&1
+            echo "===DONE==="
