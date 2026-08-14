@@ -99,16 +99,12 @@ jobs:
 
       - name: 通过 SSH 拉取镜像并重启
         uses: appleboy/ssh-action@v1.2.0
-        env:
-          GHCR_PAT: ${{ secrets.GHCR_PAT }}
-          GHCR_USER: ${{ secrets.GHCR_USERNAME || github.actor }}
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
           username: ${{ secrets.DEPLOY_SSH_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
           script_stop: true
-          envs: GHCR_PAT,GHCR_USER
           script: |
             set -e
 
@@ -138,13 +134,7 @@ jobs:
             echo "ADMIN_TAG=latest" | sudo tee -a .env > /dev/null
             echo "WEB_TAG=latest"   | sudo tee -a .env > /dev/null
 
-            # 用 PAT 登录 GHCR（PAT 对组织内所有包有 read 权限）
-            if [ -z "$GHCR_PAT" ]; then
-              echo "❌ 缺少 Secret: GHCR_PAT（需在 ClipSync-Admin 仓库配置）"
-              exit 1
-            fi
-            echo "$GHCR_PAT" | sudo docker login ghcr.io -u "$GHCR_USER" --password-stdin
-
+            # 镜像为 public，无需 docker login；直接拉取
             # 拉取最新镜像并重启
             sudo docker compose pull admin web
             sudo docker compose up -d admin web
