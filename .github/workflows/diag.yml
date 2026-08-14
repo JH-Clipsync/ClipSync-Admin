@@ -10,7 +10,7 @@ jobs:
   diag:
     runs-on: ubuntu-latest
     steps:
-      - name: SSH 诊断2
+      - name: SSH 诊断3
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.DEPLOY_SSH_HOST }}
@@ -19,13 +19,14 @@ jobs:
           port: ${{ secrets.DEPLOY_SSH_PORT || 22 }}
           script_stop: false
           script: |
-            echo "===== server 容器挂载 ====="
-            sudo docker inspect clipsync-server --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
-            echo "===== server config.yaml 位置 ====="
-            sudo docker exec clipsync-server cat /data/config/config.yaml 2>&1 | head -60
-            echo "===== admin 容器网络模式 ====="
-            sudo docker inspect clipsync-admin --format 'NetworkMode={{.HostConfig.NetworkMode}}'
-            echo "===== admin 网络列表 ====="
-            sudo docker inspect clipsync-admin --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'
-            echo "===== compose 文件 ====="
-            cat /app/Clipsync/admin/docker-compose.yml
+            echo "===== server config.yaml ====="
+            sudo cat /app/ClipSync/server/config/config.yaml
+            echo ""
+            echo "===== admin config.yaml（当前） ====="
+            sudo cat /app/Clipsync/admin/config/config.yaml 2>/dev/null || echo "不存在"
+            echo ""
+            echo "===== admin 容器最新日志 ====="
+            sudo docker logs --tail 10 clipsync-admin 2>&1
+            echo ""
+            echo "===== 测试 127.0.0.1:3306 ====="
+            timeout 3 bash -c 'echo > /dev/tcp/127.0.0.1/3306' 2>&1 && echo "3306 可达" || echo "3306 不可达"
