@@ -2,10 +2,11 @@
 #
 # 首次部署：
 #   1. 在服务器创建目录：mkdir -p /opt/clipsync-admin/config /opt/clipsync-admin/uploads
-#   2. 把 config.yaml 放到 /opt/clipsync-admin/config/config.yaml
-#      （可参考仓库根目录 config.example.yaml；注意 mysql/redis 地址填宿主机 IP）
-#      默认监听 :28002，需要改端口直接改 config.yaml 里的 app.addr
-#   3. 复制本目录下的 .env.example 为 .env 并按需修改
+#   2. 手动创建 /opt/clipsync-admin/config/config.yaml（参考仓库 config.example.yaml）
+#      - mysql/redis 地址填 127.0.0.1（host 网络模式）
+#      - app.addr 用 ":28002"
+#      - 上传 url_prefix 建议改成 "/clipsync/admin/static"（配合外层反代）
+#   3. 复制 .env.example 为 .env 并按需修改
 #   4. docker compose up -d
 #
 # 更新镜像：
@@ -18,10 +19,8 @@ services:
     image: ghcr.io/jh-clipsync/clipsync-admin:${ADMIN_TAG:-latest}
     container_name: clipsync-admin
     restart: unless-stopped
-    # 用 host 网络直连宿主机上的 MySQL/Redis（和 ClipSync-Server 一致）
-    # admin 监听端口由 config.yaml 里的 app.addr 决定，默认 :28002
+    # host 网络：直连宿主机 MySQL/Redis，来源 IP 为 127.0.0.1
     network_mode: host
-    user: "0:0"
     command: ["-c", "/data/config/config.yaml"]
     volumes:
       - ./config:/data/config:ro
@@ -41,15 +40,11 @@ services:
     depends_on:
       - admin
     ports:
-      # 宿主机端口:容器端口；默认 28200，可在 .env 里改 WEB_PORT
       - "${WEB_PORT:-28200}:80"
     environment:
       - TZ=Asia/Shanghai
-      # 反代到宿主机上的 admin 后端（容器里访问宿主机的公网/内网 IP）
-      # Linux: host.docker.internal 需要 extra_hosts；macOS/Windows Docker Desktop 自带
-      - ADMIN_UPSTREAM=${ADMIN_UPSTREAM:-http://host.docker.internal:28002}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # 生产环境由外层反代（Caddy/Nginx）处理 /clipsync/admin/api，
+      # 这里不设 ADMIN_UPSTREAM，容器内 nginx 只托管静态文件
     logging:
       driver: json-file
       options:
