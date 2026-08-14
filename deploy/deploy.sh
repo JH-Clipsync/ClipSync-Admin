@@ -96,8 +96,8 @@ gen_config() {
   admin_token="${admin_token:-}"
   jwt_secret=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)
 
-  # DSN 中密码可能含特殊字符（如 **），直接拼进 YAML 双引号字符串即可
-  echo "==> 从 $server_cfg 读取：mysql=${mysql_user}@${mysql_host}:${mysql_port}/${mysql_db}, redis=${redis_addr}/${redis_db}"
+  # DSN 中密码可能含特殊字符（如 **），用单引号 YAML 字符串更安全
+  echo "==> 从 $server_cfg 读取：mysql=${mysql_user}@${mysql_host}:${mysql_port}/${mysql_db}, redis=${redis_addr}/${redis_db}" >&2
 
   cat <<EOF
 app:
@@ -106,18 +106,18 @@ app:
   mode: release
 
 mysql:
-  dsn: "${mysql_user}:${mysql_pass}@tcp(${mysql_host}:${mysql_port})/${mysql_db}?charset=utf8mb4&parseTime=True&loc=Local"
+  dsn: '${mysql_user}:${mysql_pass}@tcp(${mysql_host}:${mysql_port})/${mysql_db}?charset=utf8mb4&parseTime=True&loc=Local'
   max_idle_conns: 10
   max_open_conns: 100
   conn_max_lifetime: 3600
 
 redis:
-  addr: "${redis_addr}"
-  password: "${redis_pass}"
+  addr: '${redis_addr}'
+  password: '${redis_pass}'
   db: ${redis_db}
 
 jwt:
-  secret: "${jwt_secret}"
+  secret: '${jwt_secret}'
   header: "Authorization"
   scheme: "Bearer"
   ttl: 7200
@@ -211,9 +211,13 @@ for f in /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/*; do
   [ -f "$f" ] || continue
   if $SUDO grep -q "95qw" "$f" 2>/dev/null; then
     NGINX_CHECKED=1
+    # 把所有旧的静态路径统一替换为正确路径
     if ! $SUDO grep -q "/app/ClipSync/admin/web" "$f"; then
-      echo "  ⚠ $f 里的静态路径还是旧路径，更新中..."
-      $SUDO sed -i 's|/app/Clipsync/admin/web|/app/ClipSync/admin/web|g' "$f"
+      echo "  ⚠ $f 里的静态路径需要更新..."
+      $SUDO sed -i \
+        -e 's|/app/Clipsync/admin/web|/app/ClipSync/admin/web|g' \
+        -e 's|/app/ClipSync/server/admin/web|/app/ClipSync/admin/web|g' \
+        "$f"
     fi
     if ! $SUDO grep -q "28002" "$f"; then
       echo "  ⚠ $f 里没有 28002 反代规则，请参考 deploy/nginx.clipsync.conf 手动添加"
