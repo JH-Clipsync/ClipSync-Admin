@@ -144,6 +144,24 @@ func (h *DataHandler) ListDevices(c *gin.Context) {
 	result.Success(c, devices)
 }
 
+// ListAllDevices GET /devices 跨用户分页查询设备
+// 查询参数：keyword（用户名/设备ID/名称/IP）、status（0=正常 1=禁用 -1=全部）、page、size
+func (h *DataHandler) ListAllDevices(c *gin.Context) {
+	keyword := c.Query("keyword")
+	status := -1
+	if s := c.Query("status"); s != "" {
+		status = intQ(c, "status", -1)
+	}
+	page := intQ(c, "page", 1)
+	size := intQ(c, "size", 20)
+	pageData, err := h.svc.ListAllDevices(c.Request.Context(), keyword, status, page, size)
+	if err != nil {
+		respBiz(c, err)
+		return
+	}
+	result.Success(c, pageData)
+}
+
 type setDeviceStatusReq struct {
 	Disabled bool `json:"disabled"`
 }
@@ -160,6 +178,28 @@ func (h *DataHandler) SetDeviceStatus(c *gin.Context) {
 		return
 	}
 	if err := h.svc.SetDeviceStatus(c.Request.Context(), int64P(c, "id"), deviceID, req.Disabled); err != nil {
+		respBiz(c, err)
+		return
+	}
+	result.Success(c, nil)
+}
+
+type renameDeviceReq struct {
+	Name string `json:"name"`
+}
+
+// RenameDevice PUT /users/:id/devices/:did/name 修改设备自定义名称
+func (h *DataHandler) RenameDevice(c *gin.Context) {
+	var req renameDeviceReq
+	if !bindOrFail(c, &req) {
+		return
+	}
+	deviceID := c.Param("did")
+	if deviceID == "" {
+		result.Fail(c, result.CodeParamError)
+		return
+	}
+	if err := h.svc.RenameDevice(c.Request.Context(), int64P(c, "id"), deviceID, req.Name); err != nil {
 		respBiz(c, err)
 		return
 	}

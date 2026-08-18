@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/clipsync/admin/internal/config"
@@ -136,56 +138,126 @@ func (n *ServerNotifier) SetDeviceStatus(ctx context.Context, userID int64, devi
 	})
 }
 
-// ServerDevice 对应 Server 端 /admin/users/{id}/devices 返回的设备信息。
+// ServerDevice 对应 Server 端 /server-admin/users/{id}/devices 返回的设备信息。
 type ServerDevice struct {
 	UserID     int64  `json:"user_id"`
+	Username   string `json:"username"`
 	DeviceID   string `json:"device_id"`
 	Role       string `json:"role"`
 	Platform   string `json:"platform"`
+	Name       string `json:"name"`
+	LastIP     string `json:"last_ip"`
 	Disabled   bool   `json:"disabled"`
 	Online     bool   `json:"online"`
 	LastSeenAt string `json:"last_seen_at"`
 	CreatedAt  string `json:"created_at"`
 }
 
-// FetchDevices 调用 Server GET /admin/users/{id}/devices 获取设备列表（含在线状态）。
+// FetchDevices 调用 Server GET /server-admin/users/{id}/devices 获取设备列表（含在线状态）。
 func (n *ServerNotifier) FetchDevices(ctx context.Context, userID int64) ([]ServerDevice, error) {
 	if n.cfg.Addr == "" {
 		return nil, fmt.Errorf("server.addr 未配置，无法获取设备列表")
 	}
-	url := fmt.Sprintf("%s/admin/users/%d/devices", n.cfg.Addr, userID)
+	url := fmt.Sprintf("%s/server-admin/users/%d/devices", n.cfg.Addr, userID)
+	var result struct {
+		Devices []ServerDevice `json:"devices"`
+	}
+	if err := n.getJSON(ctx, url, &result); err != nil {
+		return nil, err
+	}
+	return result.Devices, nil
+}
+
+// FetchAllDevices 调用 Server GET /server-admin/devices 跨用户分页查询设备。
+func (n *ServerNotifier) FetchAllDevices(ctx context.Context, keyword string, disabled *bool, page, pageSize int) ([]ServerDevice, int64, error) {
+	if n.cfg.Addr == "" {
+		return nil, 0, fmt.Errorf("server.addr 未配置，无法获取设备列表")
+	}
+	u := fmt.Sprintf("%s/server-admin/devices?page=%d&page_size=%d", n.cfg.Addr, page, pageSize)
+	if keyword != "" {
+		u += "&keyword=" + urlQueryEscape(keyword)
+	}
+	if disabled != nil {
+		u += "&disabled=" + strconv.FormatBool(*disabled)
+	}
+	var result struct {
+		List  []ServerDevice `json:"list"`
+		Total int64          `json:"total"`
+		Page  int            `json:"page"`
+	}
+	if err := n.getJSON(ctx, u, &result); err != nil {
+		return nil, 0, err
+	}
+	return result.List, result.Total, nil
+}
+
+func (n *ServerNotifier) getJSON(ctx context.Context, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if n.cfg.HTTPAdminToken != "" {
 		req.Header.Set("Authorization", "Bearer "+n.cfg.HTTPAdminToken)
 	}
 	resp, err := n.cli.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("请求 Server 设备列表失败: %w", err)
+		return fmt.Errorf("请求 Server 失败: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("Server 返回错误 status=%d body=%s", resp.StatusCode, string(body))
+		return fmt.Errorf("Server 返回错误 status=%d body=%s", resp.StatusCode, string(body))
 	}
-	var result struct {
-		Devices []ServerDevice `json:"devices"`
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("解析 Server 响应失败: %w", err)
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("解析 Server 响应失败: %w", err)
-	}
-	return result.Devices, nil
+	return nil
 }
 
-// commandViaHTTP HTTP 兜底。Server 端 /admin/kick 支持全动作。
+// RenameDevice 调用 Server PUT /server-admin/users/{id}/devices/{deviceID}/name 修改设备名称。
+func (n *ServerNotifier) RenameDevice(ctx context.Context, userID int64, deviceID, name string) error {
+	if n.cfg.Addr == "" {
+		return fmt.Errorf("server.addr 未配置，无法重命名设备")
+	}
+	u := fmt.Sprintf("%s/server-admin/users/%d/devices/%s/name", n.cfg.Addr, userID, url.PathEscape(deviceID))
+	body, _ := json.Marshal(map[string]string{"name": name})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if n.cfg.HTTPAdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+n.cfg.HTTPAdminToken)
+	}
+	resp, err := n.cli.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求 Server 失败: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("Server 返回错误 status=%d body=%s", resp.StatusCode, string(respBody))
+	}
+	n.logger.Info("rename device via server http",
+		zap.Int64("user_id", userID),
+		zap.String("device_id", deviceID),
+		zap.String("name", name),
+		zap.Int("status", resp.StatusCode),
+	)
+	return nil
+}
+
+func urlQueryEscape(s string) string {
+	return url.QueryEscape(s)
+}
+
+// commandViaHTTP HTTP 兜底。Server 端 /server-admin/kick 支持全动作。
 func (n *ServerNotifier) commandViaHTTP(ctx context.Context, cmd AdminCommand) error {
 	body, _ := json.Marshal(cmd)
-	url := n.cfg.Addr + "/admin/kick"
+	url := n.cfg.Addr + "/server-admin/kick"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err

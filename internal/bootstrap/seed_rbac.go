@@ -76,6 +76,21 @@ var rbacMenuTree = []menuSeed{
 						Code: "biz:users:delete", Title: "删除用户", Type: 3, Sort: 4,
 						Perms: []permSeed{{Name: "删除用户", Route: "/api/admin/users/:id", Method: mDEL, IsIntercept: 1}},
 					},
+					{
+						Code: "biz:users:kick", Title: "踢用户下线", Type: 3, Sort: 5,
+						Perms: []permSeed{{Name: "踢用户下线", Route: "/api/admin/users/:id/kick", Method: mPOST, IsIntercept: 1}},
+					},
+				},
+			},
+			{
+				Code: "biz:devices", Title: "设备列表", Name: "devices", Path: "/devices",
+				Type: 2, Sort: 22,
+				Perms: []permSeed{
+					{Name: "设备列表", Route: "/api/admin/devices", Method: mGET, IsIntercept: 1},
+					{Name: "用户设备列表", Route: "/api/admin/users/:id/devices", Method: mGET, IsIntercept: 1},
+					{Name: "更新设备状态", Route: "/api/admin/users/:id/devices/:did", Method: mPUT, IsIntercept: 1},
+					{Name: "重命名设备", Route: "/api/admin/users/:id/devices/:did/name", Method: mPUT, IsIntercept: 1},
+					{Name: "踢设备下线", Route: "/api/admin/users/:id/devices/:did/kick", Method: mPOST, IsIntercept: 1},
 				},
 			},
 		},

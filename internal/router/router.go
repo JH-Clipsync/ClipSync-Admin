@@ -84,10 +84,13 @@ func New(
 		rbacGroup.DELETE("/users/:id", dataH.DeleteUser)
 		// 主动踢该用户所有设备下线（不改密码不禁用）
 		rbacGroup.POST("/users/:id/kick", dataH.KickUserNow)
-		// 设备管理：列出、启用/禁用、踢单台设备
+		// 设备管理：列出、启用/禁用、重命名、踢单台设备
 		rbacGroup.GET("/users/:id/devices", dataH.ListDevices)
 		rbacGroup.PUT("/users/:id/devices/:did", dataH.SetDeviceStatus)
+		rbacGroup.PUT("/users/:id/devices/:did/name", dataH.RenameDevice)
 		rbacGroup.POST("/users/:id/devices/:did/kick", dataH.KickDevice)
+		// 全量设备管理（跨用户搜索/筛选/分页）
+		rbacGroup.GET("/devices", dataH.ListAllDevices)
 
 		// RBAC management
 		rbacGroup.GET("/rbac/admins", rbacH.ListAdmins)
