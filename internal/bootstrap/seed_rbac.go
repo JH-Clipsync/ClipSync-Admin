@@ -94,7 +94,7 @@ var rbacMenuTree = []menuSeed{
 	},
 	{
 		Code: "device-mgmt", Title: "设备管理", Name: "device-mgmt", Path: "/device-mgmt",
-		Icon: "Cpu", Type: 2, Sort: 30,
+		Icon: "Monitor", Type: 2, Sort: 30,
 		Children: []menuSeed{
 			{
 				Code: "biz:devices", Title: "设备列表", Name: "devices", Path: "/devices",
