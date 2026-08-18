@@ -282,17 +282,18 @@ func (s *AdminDataService) ResetUserPassword(ctx context.Context, id int64, _ ui
 }
 
 // DeleteUser 物理删除用户（users 表没有 is_del 字段，不做软删除）。
-// 删除前先踢掉所有连接，避免用户表不存在后连接还持有 userID。
+// 先执行数据库删除；删除成功后再主动踢下线，避免踢失败时用户还在库里、
+// 同时也保证不会出现"用户删了但设备还在线"的情况。
 func (s *AdminDataService) DeleteUser(ctx context.Context, id int64, _ uint64) error {
-	if s.kick != nil {
-		_ = s.kick.KickUser(ctx, id, ReasonUserDeleted)
-	}
 	res := s.db.WithContext(ctx).Where("id = ?", id).Delete(&model.User{})
 	if res.Error != nil {
 		return biz(result.CodeDBError, res.Error.Error())
 	}
 	if res.RowsAffected == 0 {
 		return biz(result.CodeRecordNotFound, "用户不存在")
+	}
+	if s.kick != nil {
+		_ = s.kick.KickUser(ctx, id, ReasonUserDeleted)
 	}
 	return nil
 }
