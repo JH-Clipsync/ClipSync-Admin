@@ -58,20 +58,41 @@ func (h *DataHandler) GetUser(c *gin.Context) {
 
 type updateUserReq struct {
 	Username string `json:"username"`
+	Nickname string `json:"nickname"`
 	Status   int    `json:"status"` // 0正常 1禁用，映射到 disabled
 }
 
-// UpdateUser PUT /users/:id 可改 username 和 disabled
+// UpdateUser PUT /users/:id 可改 username、nickname 和 disabled
 func (h *DataHandler) UpdateUser(c *gin.Context) {
 	var req updateUserReq
 	if !bindOrFail(c, &req) {
 		return
 	}
-	if err := h.svc.UpdateUser(c.Request.Context(), int64P(c, "id"), req.Username, req.Status, operatorID(c)); err != nil {
+	if err := h.svc.UpdateUser(c.Request.Context(), int64P(c, "id"), req.Username, req.Nickname, req.Status, operatorID(c)); err != nil {
 		respBiz(c, err)
 		return
 	}
 	result.Success(c, nil)
+}
+
+type createUserReq struct {
+	Username string `json:"username" binding:"required"`
+	Nickname string `json:"nickname"`
+	Password string `json:"password" binding:"required"`
+}
+
+// CreateUser POST /users 管理端创建用户
+func (h *DataHandler) CreateUser(c *gin.Context) {
+	var req createUserReq
+	if !bindOrFail(c, &req) {
+		return
+	}
+	id, err := h.svc.CreateUser(c.Request.Context(), req.Username, req.Nickname, req.Password)
+	if err != nil {
+		respBiz(c, err)
+		return
+	}
+	result.Success(c, map[string]int64{"id": id})
 }
 
 type updateUserStatusReq struct {
@@ -145,16 +166,22 @@ func (h *DataHandler) ListDevices(c *gin.Context) {
 }
 
 // ListAllDevices GET /devices 跨用户分页查询设备
-// 查询参数：keyword（用户名/设备ID/名称/IP）、status（0=正常 1=禁用 -1=全部）、page、size
+// 查询参数：keyword（用户名/设备ID/名称/IP）、status（0=正常 1=禁用 -1=全部）、user_id、page、size
 func (h *DataHandler) ListAllDevices(c *gin.Context) {
 	keyword := c.Query("keyword")
 	status := -1
 	if s := c.Query("status"); s != "" {
 		status = intQ(c, "status", -1)
 	}
+	userID := int64(0)
+	if s := c.Query("user_id"); s != "" {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			userID = v
+		}
+	}
 	page := intQ(c, "page", 1)
 	size := intQ(c, "size", 20)
-	pageData, err := h.svc.ListAllDevices(c.Request.Context(), keyword, status, page, size)
+	pageData, err := h.svc.ListAllDevices(c.Request.Context(), keyword, status, userID, page, size)
 	if err != nil {
 		respBiz(c, err)
 		return

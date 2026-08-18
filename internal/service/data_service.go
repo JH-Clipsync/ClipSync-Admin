@@ -215,20 +215,52 @@ func (s *AdminDataService) GetUserDetail(ctx context.Context, id int64) (*UserDe
 	}, nil
 }
 
-// UpdateUser 只改 username 和 disabled（users 表没有 remark 等其他字段）。
-func (s *AdminDataService) UpdateUser(ctx context.Context, id int64, username string, disabled int, _ uint64) error {
+// UpdateUser 改 username、nickname 和 disabled。
+func (s *AdminDataService) UpdateUser(ctx context.Context, id int64, username, nickname string, disabled int, _ uint64) error {
 	updates := map[string]any{
 		"username": username,
+		"nickname": nickname,
 		"disabled": disabled,
 	}
 	res := s.db.WithContext(ctx).Model(&model.User{}).Where("id = ?", id).Updates(updates)
 	if res.Error != nil {
+		// MySQL 1062：用户名唯一冲突
+		if strings.Contains(res.Error.Error(), "Duplicate entry") {
+			return biz(result.CodeParamError, "用户名已存在")
+		}
 		return biz(result.CodeDBError, res.Error.Error())
 	}
 	if res.RowsAffected == 0 {
 		return biz(result.CodeRecordNotFound, "用户不存在")
 	}
 	return nil
+}
+
+// CreateUser 通过 Server 创建用户（密码由 Server bcrypt 哈希），Server 写库成功后
+// 因为 Admin 和 Server 共用数据库，Admin 端无需再本地插入。
+func (s *AdminDataService) CreateUser(ctx context.Context, username, nickname, password string) (int64, error) {
+	username = strings.TrimSpace(username)
+	nickname = strings.TrimSpace(nickname)
+	if len([]rune(username)) < 3 || len([]rune(username)) > 32 {
+		return 0, biz(result.CodeParamError, "用户名长度需为 3-32 个字符")
+	}
+	if len([]rune(nickname)) > 32 {
+		return 0, biz(result.CodeParamError, "昵称不能超过 32 个字符")
+	}
+	if len(password) < 6 {
+		return 0, biz(result.CodeParamError, "密码长度至少 6 位")
+	}
+	if s.kick == nil {
+		return 0, biz(result.CodeInternalError, "未配置 Server 联动，无法创建用户")
+	}
+	u, err := s.kick.CreateUser(ctx, username, nickname, password)
+	if err != nil {
+		if strings.Contains(err.Error(), "用户名已存在") {
+			return 0, biz(result.CodeParamError, "用户名已存在")
+		}
+		return 0, biz(result.CodeInternalError, err.Error())
+	}
+	return u.ID, nil
 }
 
 // UpdateUserStatus 改 disabled 字段（前端传 status，handler 映射成 disabled）。
@@ -363,10 +395,10 @@ func (s *AdminDataService) ListDevices(ctx context.Context, userID int64) ([]Dev
 	return list, nil
 }
 
-// ListAllDevices 跨用户分页查询设备，优先从 Server HTTP 接口拉（在线状态准确），
+// ListAllDevices 跨用户分页查询所有设备；userID > 0 时只查该用户。优先走 Server HTTP，
 // Server 不可用时回退到本地 DB 查询。keyword 同时模糊匹配用户名/设备ID/名称/IP。
 func (s *AdminDataService) ListAllDevices(
-	ctx context.Context, keyword string, disabled int, page, size int,
+	ctx context.Context, keyword string, disabled int, userID int64, page, size int,
 ) (*Page, error) {
 	page, size = normalize(page, size)
 	if s.kick != nil {
@@ -375,7 +407,7 @@ func (s *AdminDataService) ListAllDevices(
 			v := disabled != 0
 			b = &v
 		}
-		serverDevices, total, err := s.kick.FetchAllDevices(ctx, keyword, b, page, size)
+		serverDevices, total, err := s.kick.FetchAllDevices(ctx, keyword, b, userID, page, size)
 		if err == nil {
 			list := make([]Device, 0, len(serverDevices))
 			for _, sd := range serverDevices {
@@ -413,6 +445,9 @@ func (s *AdminDataService) ListAllDevices(
 	}
 	if disabled >= 0 {
 		q = q.Where("d.disabled = ?", disabled)
+	}
+	if userID > 0 {
+		q = q.Where("d.user_id = ?", userID)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

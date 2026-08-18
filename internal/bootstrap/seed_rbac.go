@@ -61,6 +61,10 @@ var rbacMenuTree = []menuSeed{
 				},
 				Children: []menuSeed{
 					{
+						Code: "biz:users:create", Title: "新增用户", Type: 3, Sort: 0,
+						Perms: []permSeed{{Name: "新增用户", Route: "/api/admin/users", Method: mPOST, IsIntercept: 1}},
+					},
+					{
 						Code: "biz:users:update", Title: "编辑用户", Type: 3, Sort: 1,
 						Perms: []permSeed{{Name: "更新用户", Route: "/api/admin/users/:id", Method: mPUT, IsIntercept: 1}},
 					},

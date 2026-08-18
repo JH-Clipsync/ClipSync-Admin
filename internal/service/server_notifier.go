@@ -169,11 +169,15 @@ func (n *ServerNotifier) FetchDevices(ctx context.Context, userID int64) ([]Serv
 }
 
 // FetchAllDevices 调用 Server GET /server-admin/devices 跨用户分页查询设备。
-func (n *ServerNotifier) FetchAllDevices(ctx context.Context, keyword string, disabled *bool, page, pageSize int) ([]ServerDevice, int64, error) {
+// userID > 0 时只查该用户。
+func (n *ServerNotifier) FetchAllDevices(ctx context.Context, keyword string, disabled *bool, userID int64, page, pageSize int) ([]ServerDevice, int64, error) {
 	if n.cfg.Addr == "" {
 		return nil, 0, fmt.Errorf("server.addr 未配置，无法获取设备列表")
 	}
 	u := fmt.Sprintf("%s/server-admin/devices?page=%d&page_size=%d", n.cfg.Addr, page, pageSize)
+	if userID > 0 {
+		u += fmt.Sprintf("&user_id=%d", userID)
+	}
 	if keyword != "" {
 		u += "&keyword=" + urlQueryEscape(keyword)
 	}
@@ -252,6 +256,56 @@ func (n *ServerNotifier) RenameDevice(ctx context.Context, userID int64, deviceI
 
 func urlQueryEscape(s string) string {
 	return url.QueryEscape(s)
+}
+
+// CreatedUser Server 创建用户后返回的信息。
+type CreatedUser struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Nickname string `json:"nickname"`
+}
+
+// CreateUser 调用 Server POST /server-admin/users 创建用户。
+// 密码由 Server 端 bcrypt 哈希，Admin 不接触明文密码存储。
+func (n *ServerNotifier) CreateUser(ctx context.Context, username, nickname, password string) (*CreatedUser, error) {
+	if n.cfg.Addr == "" {
+		return nil, fmt.Errorf("server.addr 未配置，无法创建用户")
+	}
+	u := n.cfg.Addr + "/server-admin/users"
+	body, _ := json.Marshal(map[string]string{
+		"username": username,
+		"nickname": nickname,
+		"password": password,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if n.cfg.HTTPAdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+n.cfg.HTTPAdminToken)
+	}
+	resp, err := n.cli.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 Server 失败: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusConflict {
+		return nil, fmt.Errorf("用户名已存在")
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("Server 返回错误 status=%d body=%s", resp.StatusCode, string(respBody))
+	}
+	var cu CreatedUser
+	if err := json.Unmarshal(respBody, &cu); err != nil {
+		return nil, fmt.Errorf("解析 Server 响应失败: %w", err)
+	}
+	n.logger.Info("create user via server http",
+		zap.Int64("id", cu.ID),
+		zap.String("username", cu.Username),
+	)
+	return &cu, nil
 }
 
 // commandViaHTTP HTTP 兜底。Server 端 /server-admin/kick 支持全动作。

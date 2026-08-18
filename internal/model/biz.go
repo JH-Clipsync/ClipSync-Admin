@@ -7,6 +7,7 @@ import "time"
 type User struct {
 	ID           int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	Username     string    `gorm:"size:64;uniqueIndex" json:"username"`
+	Nickname     string    `gorm:"size:64" json:"nickname"`
 	PasswordHash string    `gorm:"size:255" json:"-"`
 	Disabled     int8      `gorm:"not null;default:0" json:"disabled"` // 0正常 1禁用
 	CreatedAt    time.Time `json:"createdAt"`

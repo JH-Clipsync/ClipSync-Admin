@@ -77,6 +77,7 @@ func New(
 
 		// 用户管理
 		rbacGroup.GET("/users", dataH.ListUsers)
+		rbacGroup.POST("/users", dataH.CreateUser)
 		rbacGroup.GET("/users/:id", dataH.GetUser)
 		rbacGroup.PUT("/users/:id", dataH.UpdateUser)
 		rbacGroup.PUT("/users/:id/status", dataH.UpdateUserStatus)
