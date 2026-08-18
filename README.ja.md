@@ -1,7 +1,7 @@
 <h1 align="center">ClipSync-Admin</h1>
 
 <p align="center">
-  <b>ClipSync 管理画面バックエンド</b><br/>
+  <b>ClipSync 管理バックエンド</b><br/>
   <a href="README.md">简体中文</a> ·
   <a href="README.en.md">English</a> ·
   <a href="README.ja.md">日本語</a>
@@ -9,328 +9,361 @@
 
 ---
 
-ClipSync-Admin は、セルフホスト型 [ClipSync](https://github.com/JH-Clipsync) クロスデバイスメッセージ同期システムの管理画面バックエンドで、**Go + Gin + GORM + MySQL + Redis + JWT** で構築されています。運用/サポート/管理者向けに、ダッシュボード統計、ユーザー管理、端末管理、RBAC（管理者/ロール/メニュー/権限）、管理者認証の機能を提供し、Redis Pub/Sub と HTTP の二つの経路で [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) と連携します。これにより「パスワードをリセットしたら即座に端末をキック」「端末を無効化したら即座に切断」が実現されます。
+ClipSync-Admin は、[ClipSync](https://github.com/JH-Clipsync) のセルフホスト型クロスデバイスメッセージ同期システムの管理バックエンドです。**Go + Gin + GORM + MySQL + Redis + JWT** で開発されています。運用 / カスタマーサポート / 管理者向けに、ユーザー管理、デバイス管理、ダッシュボード統計、RBAC ロール権限、管理者認証などの機能を提供します。Redis Pub/Sub と HTTP の2つのチャネルで [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) と連携し、「パスワード変更で即ログアウト、デバイス無効化で即切断」を実現します。デフォルトでは **28002** ポートで待ち受けます。
 
-フロントエンドは [ClipSync-Admin-Web](https://github.com/JH-Clipsync/ClipSync-Admin-Web)（Vue 3 + Element Plus）です。
+付属するフロントエンドは [ClipSync-Admin-Web](https://github.com/JH-Clipsync/ClipSync-Admin-Web)（Vue 3 + Element Plus）です。
 
 ---
 
 ## ✨ 主な機能
 
-| 分類 | 内容 |
-|------|------|
-| 📊 **ダッシュボード** | ユーザー総数、アクティブユーザー数、管理者数、ロール数の統計 |
-| 👤 **ユーザー管理** | 一覧（検索/無効フィルタ/ページング）、詳細、編集、有効/無効化、パスワードリセット（ランダムパスワードを自動生成し平文を一度だけ返却）、削除、強制キック。各ユーザーに端末総数とオンライン数を表示 |
-| 📱 **端末管理** | ユーザーの全端末を一覧（ロール/プラットフォーム/カスタム名/最終 IP/オンライン状態）、全ユーザー横断のページング検索、有効/無効化、リネーム、単一端末のキック |
-| 🔌 **リアルタイムオンライン状態** | 端末一覧はまず Server の `GET /server-admin/users/{id}/devices` を呼び出し、オンライン状態は Server のメモリ Hub 準拠。Server 不通時はローカル MySQL + Redis にフォールバック |
-| 📣 **Server 連携通知** | パスワードリセット/ユーザー凍結/ユーザー削除/端末無効化時に Redis Pub/Sub（チャネル `clipsync:admin:kick_user`）で Server に即時切断を通知。Redis 不通時は HTTP にフォールバック |
-| 🛡️ **RBAC** | 管理者/ロール/メニュー/API 権限の完全な CRUD。ロール-メニュー、メニュー-権限、管理者-ロールの多対多リレーション、エンドポイントレベルの認可。内蔵スーパー管理者 `admin` は削除不可で保護 |
-| 🔐 **管理者認証** | JWT（TTL 2時間、スライディングリフレッシュ）、管理者パスワードは bcrypt、失敗回数によるアカウントロック、失効可能なトークン（jti を Redis に保存） |
-| ✍️ **API リクエスト署名** | すべてのリクエストに HMAC-SHA256 署名（method/path/query/timestamp/nonce/bodyMD5）が必要。ログイン前は静的鍵 `sign_static_secret`、ログイン後はセッション単位の動的鍵に切り替え、改ざん/リプレイを防止 |
-| 🖼️ **画像アップロード** | 管理者アバターなど。拡張子ホワイトリスト + サイズ制限 + 日付ごとのディレクトリ分割 |
-| 🧩 **DB 共有** | ClipSync-Server と同一の MySQL `clipsync` DB を共有。業務テーブル `users`/`devices` は Server が作成し、Admin は自身の `admin_rbac_*` テーブルのみ移行（すべて `admin_` プレフィックスで衝突を回避） |
-| 🔑 **デュアルハッシュ** | 管理者パスワードは bcrypt、業務ユーザーパスワードは scrypt（Server と完全互換、N=32768/r=8/p=1） |
-| 🐳 **Docker ネイティブ** | マルチステージビルドで distroless nonroot イメージを生成、ホストネットワークでホスト上の MySQL/Redis に直接接続、待受 `:28002`。デプロイスクリプトが Server 設定から Admin 設定を自動生成 |
-
----
-
-## 🏗️ 技術スタック
-
-- **言語**: Go 1.22以上
-- **HTTP フレームワーク**: [Gin](https://github.com/gin-gonic/gin) v1.10
-- **ORM**: [GORM](https://gorm.io) v1.25 + `gorm.io/driver/mysql`
-- **データベース**: MySQL 8（ClipSync-Server と共有）
-- **キャッシュ**: Redis（別 DB、デフォルト db=2）
-- **JWT**: `golang-jwt/jwt/v5`、jti による失効対応
-- **設定**: [viper](https://github.com/spf13/viper)（YAML + `CLIPSYNC_ADMIN_` 環境変数プレフィックス）
-- **ログ**: [zap](https://github.com/uber-go/zap)
-- **パスワードハッシュ**: 管理者は bcrypt / 業務ユーザーは scrypt
-- **イメージ**: `gcr.io/distroless/base-debian12:nonroot`
+| モジュール | 説明 |
+|------------|------|
+| 📊 **ダッシュボード統計** | ユーザー総数、アクティブユーザー数（`disabled=0`）、管理者数、ロール数 |
+| 👤 **ユーザー管理** | ユーザー一覧（ユーザー名検索 / ステータスフィルタ / ページネーション）、詳細、作成、編集、有効/無効化、パスワードリセット（10文字のランダム平文を生成して返却）、物理削除、強制ログアウト。ユーザーごとにデバイス総数と現在のオンライン数を集計 |
+| 📱 **デバイス管理** | ユーザーの全デバイス一覧（ロール / プラットフォーム / カスタム名 / 最終 IP / オンライン状態）、ユーザーをまたいだページネーション検索（ユーザー名 / デバイス ID / 名前 / IP のあいまい一致）、デバイスの有効/無効化、リネーム、1台のみキック |
+| 🔌 **リアルタイムオンライン状態** | デバイス一覧は**Server への HTTP 呼び出しを優先**し、`GET /server-admin/users/{id}/devices` でリアルタイムのオンライン状態を取得（Server のメモリ Hub を正とします）。Server が利用できない場合はローカルの MySQL + Redis に自動フォールバック |
+| 📣 **Server 連携通知** | パスワードリセット / ユーザーBAN / ユーザー削除 / デバイス無効化 / デバイスキック時、Redis Pub/Sub（チャネル `clipsync:admin:kick_user`）経由で Server に即時切断を通知。Redis が不通の場合は HTTP `POST {server.addr}/server-admin/kick` にフォールバックする二重構成 |
+| 🛡️ **RBAC 権限** | 管理者 / ロール / メニュー / API 権限の完全な CRUD。ロール-メニュー、メニュー-権限、管理者-ロールの多対多リレーション。インターフェースレベルのインターセプト。内蔵スーパー管理者 `admin` は保護され削除不可 |
+| 🔐 **管理者認証** | JWT（HS256、TTL 2時間、スライディングリフレッシュ）、bcrypt 管理者パスワードハッシュ（cost 設定可）、ログイン失敗回数によるロック、失効可能なトークン |
+| ✍️ **API リクエスト署名** | すべてのリクエストに HMAC-SHA256 署名（method / path / query / timestamp / nonce / bodyMD5）が必要です。ログイン前は静的鍵 `sign_static_secret` を使用し、ログイン後はセッションレベルの動的鍵に切り替わり、リプレイや改ざんを防止します |
+| 🖼️ **画像アップロード** | 管理者アバターなどの画像アップロード。拡張子ホワイトリスト + サイズ制限 + 日付別ディレクトリ保存。外部には静的ディレクトリとして公開 |
+| 🗄️ **Server とのデータベース共有** | Server の `users` / `devices` テーブルを直接読み取り。管理者関連テーブルはすべて `admin_` プレフィックスを使用し、互いに干渉しません |
+| 🐳 **Docker ネイティブ** | マルチステージビルド → distroless nonroot イメージ。host ネットワークでホストの MySQL / Redis に直接接続。`deploy.sh` が Server 設定から admin 設定を自動生成可能 |
 
 ---
 
 ## 🚀 クイックスタート
 
-### 前提
+### 前提条件
 
-- MySQL 8（ClipSync-Server によって `clipsync` DB と `users` / `sessions` / `devices` テーブルが初期化済み）
-- Redis（Server と同一インスタンスを共有、Admin は db=2 を使用）
-- ClipSync-Server が稼働し、`server.admin_token` が設定済み
+- [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) がデプロイ済みで、同じ MySQL / Redis に接続できること
+- MySQL に `clipsync` データベースが既に存在すること（Server の起動時に `users` / `sessions` / `devices` テーブルが自動作成されます）
+- Docker（推奨）または Go 1.22 以上
 
-### 方法1: Docker（推奨）
+### 方法1：Docker Compose（推奨）
 
-`deploy/deploy.sh` は Server の `config.yaml` から MySQL/Redis 接続情報を自動的に読み取り、Admin の設定ファイルを生成します。
+```bash
+# 1. デプロイディレクトリの準備
+mkdir -p /app/ClipSync/admin/api/config /app/ClipSync/admin/api/uploads
+cd /app/ClipSync/admin/api
+
+# 2. compose ファイルのコピー
+cp deploy/docker-compose.yml .
+cp deploy/.env.example .env
+
+# 3. Server 設定から admin config.yaml を自動生成
+#    スクリプトは以下の順序で Server 設定を探します：
+#      /app/ClipSync/server/config/config.yaml
+#      /app/ClipSync/server/config.yml
+#      /app/ClipSync/config/config.yaml
+#      /app/Clipsync/server/config/config.yaml
+#      /opt/clipsync/config/config.yaml
+bash deploy/deploy.sh
+```
+
+`deploy.sh` は以下を行います：
+
+1. Server の `config.yaml` から MySQL / Redis / `key_prefix` / `admin_token` を自動読み取り
+2. ローカルの `config/config.yaml` を生成。JWT 秘密鍵は `/dev/urandom` でランダム生成
+3. 過去の移行スクリプトによる設定破損（例：`redis.addr` が誤って http URL に変更されている等）を検出して修復
+4. `docker compose pull && up -d --force-recreate`
+5. nginx 設定（API パス、静的リソース location）を確認して修復
+
+デフォルトのスーパー管理者アカウント：
+
+```
+アカウント：admin
+パスワード：Admin**8
+```
+
+> 初回ログイン後、すぐにパスワードを変更してください。
+
+### 方法2：Docker ワンライナー
+
+```bash
+docker run -d --name clipsync-admin \
+  --network host \
+  --restart unless-stopped \
+  -v $(pwd)/config:/data/config:ro \
+  -v $(pwd)/uploads:/data/uploads \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/jh-clipsync/clipsync-admin:latest \
+  -c /data/config/config.yaml
+```
+
+### 方法3：ソースから実行
 
 ```bash
 git clone https://github.com/JH-Clipsync/ClipSync-Admin.git
 cd ClipSync-Admin
 
-# デプロイスクリプトはデフォルトで /app/ClipSync/admin/api に配置
-sudo mkdir -p /app/ClipSync/admin/api/config /app/ClipSync/admin/api/uploads
-sudo cp deploy/docker-compose.yml /app/ClipSync/admin/api/
-
-# config/config.yaml はデプロイスクリプトが Server 設定から自動生成します。
-# server.http_admin_token が Server の server.admin_token と一致していることを確認
-
-cd /app/ClipSync/admin/api
-docker compose up -d
-docker compose logs -f admin
-```
-
-デフォルトの待受アドレスは `:28002`。
-
-### 方法2: 公式イメージを取得
-
-```bash
-docker run -d --name clipsync-admin \
-  --network host \
-  -v $(pwd)/config:/data/config:ro \
-  -v $(pwd)/uploads:/data/uploads \
-  -e TZ=Asia/Shanghai \
-  ghcr.io/jh-clipsync/clipsync-admin:latest
-```
-
-イメージレジストリ: [ghcr.io/jh-clipsync/clipsync-admin](https://github.com/orgs/JH-Clipsync/packages)
-
-### 方法3: ソースから実行
-
-```bash
-# 前提: Go 1.22以上、到達可能な MySQL と Redis
+# 設定の準備
 cp config.example.yaml config.yaml
-# config.yaml を編集:
-#   - mysql.dsn を clipsync DB に向ける
-#   - redis.addr / redis.db
-#   - jwt.secret をランダムな文字列に
-#   - server.http_admin_token を Server の server.admin_token と一致させる
+vim config.yaml   # MySQL / Redis / JWT 秘密鍵 / Server 連携情報を記入
 
-go mod tidy
+# 実行
 go run .
-# 設定ファイルを指定する場合
-go run . -c /path/to/config.yaml
+
+# またはビルド
+CGO_ENABLED=0 go build -ldflags "-s -w" -o clipsync-admin .
+./clipsync-admin -c config.yaml
 ```
 
-### デフォルトアカウント
+起動時に自動で以下を実行します：
 
-初回起動時にスーパー管理者が自動的にシードされます。
-
-- アカウント: `admin`
-- パスワード: `Admin**8`
-
-**初回ログイン後、直ちにパスワードを変更してください。** 内蔵スーパー管理者は保護されており削除できません。
+- すべての `admin_` プレフィックスの RBAC テーブルを移行
+- スーパー管理者アカウント `admin / Admin**8` をシード（既に存在する場合はスキップ）
+- デフォルトメニューと権限ノードをシード
 
 ---
 
 ## ⚙️ 設定
 
-[config.example.yaml](config.example.yaml) を参照してください。設定ファイルは `-c` で指定できるほか、環境変数 `CLIPSYNC_ADMIN_` プレフィックスでも上書きできます（例: `CLIPSYNC_ADMIN_APP_ADDR`）。
+設定ファイルの例は [config.example.yaml](config.example.yaml) を参照してください。viper で読み込み、環境変数をサポートします（プレフィックス `CLIPSYNC_ADMIN_`）。
 
-| セクション | 主要項目 | 説明 |
-|---|---|---|
-| `app` | `addr` / `mode` | 待受アドレス（デフォルト `:28002`） / Gin モード（`debug` / `release`） |
-| `mysql` | `dsn` / `max_idle_conns` / `max_open_conns` | Server と同じ `clipsync` DB。Admin が移行するのは RBAC テーブルのみ |
-| `redis` | `addr` / `password` / `db` | デフォルト db=2（Server の db=0 との衝突を回避） |
-| `jwt` | `secret` / `ttl` / `refresh_on_access` | JWT 署名鍵、有効期間（秒、デフォルト7200=2時間）、スライディングリフレッシュ |
-| `security` | `bcrypt_cost` / `login_error_limit` / `login_error_ttl` / `sign_static_secret` | bcrypt cost、ログイン失敗ロック閾値/期間、ログイン前の静的署名鍵 |
-| `cors` | `allow_origins` / `allow_credentials` | 許可するフロントエンドオリジン、ローカル開発時のデフォルトは `http://localhost:5175` |
-| `log` | `level` / `format` | ログレベル（debug/info/warn/error） / 形式（console/json） |
-| `bootstrap` | `super_admin_account` / `super_admin_password` / `super_admin_name` | 起動時にシードするスーパー管理者（既にあればスキップ） |
-| `upload` | `dir` / `url_prefix` / `max_size` / `allow_ext` | アップロード先、URL プレフィックス、1ファイル上限、拡張子ホワイトリスト |
-| `server` | `key_prefix` / `addr` / `http_admin_token` | Server 連携: Redis キープレフィックス（Server と一致必須）、Server HTTP フォールバック先、Server の admin_token |
+```yaml
+app:
+  name: clipsync-admin
+  addr: ":28002"        # 待ち受けポート
+  mode: debug           # gin モード：debug / release / test
 
-### Server との連携設定
+mysql:
+  # ClipSync-Server と同じデータベースを共有
+  dsn: "clipsync:clipsync@tcp(127.0.0.1:3306)/clipsync?charset=utf8mb4&parseTime=True&loc=Local"
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
 
-Admin は2つの経路で Server に通知します。
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 2                 # 競合回避のため Server とは別の db を推奨（プレフィックスはありますが）
 
-1. **Redis Pub/Sub（主経路）**: チャネル名 = `server.key_prefix + "admin:kick_user"`（デフォルト `clipsync:admin:kick_user`）。追加設定不要で最も安定。Admin と Server が同じ Redis インスタンスに接続している必要があります。
-2. **HTTP フォールバック**: Redis が利用できない場合、`server.addr + "/server-admin/kick"` にコマンドを POST し、`Authorization: Bearer <server.http_admin_token>` を付与します。
+jwt:
+  secret: "change-me-clipsync-admin-secret"   # ⚠️ 本番環境では必ず変更
+  header: "Authorization"
+  scheme: "Bearer"
+  ttl: 7200             # トークン有効期間（秒）、デフォルト2時間
+  refresh_on_access: true
 
-端末一覧/ユーザー作成/リネームなどの**クエリと書き込み**は常に HTTP で Server を呼びます（`server.addr` が必要）。Server が `devices` テーブルとメモリ Hub の権威です。
+security:
+  bcrypt_cost: 10       # 管理者パスワードの bcrypt cost
+  login_error_limit: 5  # ログイン失敗何回でロックするか
+  login_error_ttl: 900  # 失敗カウントのウィンドウ（秒）
+  # ログイン前エンドポイントの署名鍵（フロントエンドにも同じ文字列をハードコード。ログイン成功後は動的鍵に切り替わります）
+  sign_static_secret: "clipsync-admin-static-sign-secret-v1"
 
----
+cors:
+  allow_origins:
+    - "http://localhost:5175"
+  allow_credentials: true
 
-## 🔌 API リファレンス
+log:
+  level: "info"
+  format: "console"     # console / json
 
-すべてのエンドポイントは `/api/admin` プレフィックスで、署名ミドルウェアを通過する必要があります。
+bootstrap:
+  super_admin_account: "admin"
+  super_admin_password: "Admin**8"
+  super_admin_name: "スーパー管理者"
 
-### 公開エンドポイント
+upload:
+  dir: "./data/uploads"
+  url_prefix: "/static"
+  max_size: 10485760    # 10MB
+  allow_ext: [".jpg", ".jpeg", ".png", ".webp", ".gif"]
 
-| パス | メソッド | 説明 |
-|---|---|---|
-| `/api/admin/health` | GET | ヘルスチェック |
-| `/api/admin/auth/login` | POST | 管理者ログイン（JWT + 動的署名鍵を返却） |
-
-### ログイン後のエンドポイント（JWT）
-
-| パス | メソッド | 説明 |
-|---|---|---|
-| `/api/admin/auth/logout` | POST | ログアウト（jti を失効） |
-| `/api/admin/auth/me` | GET | 現在の管理者情報 |
-| `/api/admin/auth/menus` | GET | 現在の管理者に表示可能なメニュー |
-| `/api/admin/auth/password` | PUT | 自身のパスワード変更 |
-| `/api/admin/auth/profile` | PUT | 自身のプロフィール更新 |
-| `/api/admin/upload/image` | POST | 画像アップロード |
-
-### RBAC エンドポイント（JWT + 権限チェック）
-
-| リソース | 操作 |
-|---|---|
-| ダッシュボード | `GET /dashboard` |
-| ユーザー | `GET/POST /users`、`GET/PUT/DELETE /users/:id`、`PUT /users/:id/status`、`POST /users/:id/reset-password`、`POST /users/:id/kick` |
-| ユーザー端末 | `GET /users/:id/devices`、`PUT /users/:id/devices/:did`（有効/無効）、`PUT /users/:id/devices/:did/name`（リネーム）、`POST /users/:id/devices/:did/kick` |
-| 全端末 | `GET /devices`（全ユーザー横断の検索/フィルタ/ページング） |
-| 管理者 | `GET/POST /rbac/admins`、`PUT/DELETE /rbac/admins/:id`、`PUT /rbac/admins/:id/status`、`PUT /rbac/admins/:id/password`、`GET /rbac/admins/:id/roles` |
-| ロール | `GET/POST/PUT/DELETE /rbac/roles`、`PUT /rbac/roles/:id/menus`、`GET /rbac/roles/:id/menus` |
-| メニュー | `GET/POST/PUT/DELETE /rbac/menus`、`PUT /rbac/menus/:id/perms` |
-| 権限 | `GET/POST/PUT/DELETE /rbac/perms` |
-
-### 署名ルール
-
-署名対象文字列（`\n` 区切り）:
-
-```
-METHOD\nPATH\nQUERY\nTIMESTAMP\nNONCE\nBODY_MD5
+# ClipSync-Server との連携チャネル
+server:
+  key_prefix: "clipsync:"         # Server の redis.key_prefix と一致する必要があります
+  addr: "http://127.0.0.1:28001"  # Server の HTTP アドレス（HTTP フォールバック用）
+  http_admin_token: ""            # Server の server.admin_token と一致する必要があります
 ```
 
-- `PATH` は `/api/admin` プレフィックスを除いた相対パス
-- `QUERY` はキーの辞書順にソート
-- `TIMESTAMP` はミリ秒、`NONCE` は16バイトのランダム hex
-- `BODY_MD5` はリクエストボディの MD5（GET/ボディなしは空文字）
+### 主な設定の注意点
 
-署名 = `HMAC-SHA256(secret, 署名対象文字列)` の小文字 hex。フロントエンド実装は [ClipSync-Admin-Web/src/utils/sign.ts](https://github.com/JH-Clipsync/ClipSync-Admin-Web) を参照。
-
----
-
-## 🔐 セキュリティ
-
-| 観点 | 設計 |
+| 設定 | 説明 |
 |------|------|
-| 管理者パスワード | bcrypt（デフォルト cost 10）、業務ユーザーとは独立 |
-| 業務ユーザーパスワード | scrypt（N=32768/r=8/p=1）、ClipSync-Server と完全互換。パスワードリセット時は Admin が直接 DB に書き込み |
-| JWT 失効 | トークンごとに jti を付与し、Redis に jti→adminID を保存。ログアウト時に削除して失効を実現 |
-| ブルートフォース対策 | 同一アカウントで連続失敗が閾値（デフォルト5回）を超えると一定時間（デフォルト15分）ロック |
-| リクエスト署名 | 全エンドポイントで HMAC-SHA256 署名を必須化し、タイムスタンプ + nonce で改ざん/リプレイを防止。ログイン前は静的鍵、ログイン後は動的鍵を発行 |
-| CORS | オリジンをホワイトリストで制御し、`*` は使用しない |
-| テーブル分離 | Admin 専用の RBAC テーブルはすべて `admin_` プレフィックスで業務テーブルとの衝突を回避 |
-| DB 権限 | 本番では Admin が使う MySQL アカウントに `clipsync` DB の SELECT/UPDATE/INSERT/DELETE のみ付与し、DDL/DROP 権限を与えないことを推奨 |
-| イメージ強化 | distroless nonroot（uid 65532）、シェルなし・パッケージマネージャなし |
+| `mysql.dsn` | Server と同じデータベースに接続する必要があります。Admin は `admin_*` テーブルのみ自動移行し、`users` / `devices` テーブル構造は変更しません |
+| `redis.db` | Server とは異なる db を選択することを推奨（Server デフォルト db=0、Admin 例では db=2）。`key_prefix` は Pub/Sub メッセージを受信するために Server と完全に一致する必要があります |
+| `jwt.secret` | `openssl rand -hex 32` または `head -c 32 /dev/urandom \| base64` で生成 |
+| `server.key_prefix` | Pub/Sub チャネル名 `{prefix}admin:kick_user` を決定します。Server と一致する必要があります |
+| `server.addr` | デバイス一覧の HTTP 取得、ユーザー作成、デバイスリネームのフォールバックチャネル。内网 / ローカルアドレスの指定を推奨 |
+| `server.http_admin_token` | HTTP フォールバック時の Bearer Token。Server の `server.admin_token` と完全に一致する必要があります |
 
 ---
 
-## 🐳 デプロイ構成
-
-### Nginx リバースプロキシのパス設計
-
-[deploy/nginx.clipsync.conf](deploy/nginx.clipsync.conf) に同一オリジン配下の完全なパス設計例があります。
+## 🏗️ プロジェクト構成
 
 ```
-/clipsync/admin/api/       → 127.0.0.1:28002/api/admin/   （Admin API）
-/clipsync/admin/static/    → 127.0.0.1:28002/static/      （Admin アップロード）
-/clipsync/admin/           → /app/ClipSync/admin/web/      （Admin SPA）
-/clipsync/ws               → 127.0.0.1:28001/ws            （Server WebSocket）
-/clipsync/                 → 127.0.0.1:28001/              （Server 他 API）
+┌────────────────────┐         ┌────────────────────────────┐
+│ ClipSync-Admin-Web │ ──API──▶│     ClipSync-Admin         │
+│   (Vue 3 + EP)     │ ◀────── │  Gin + GORM + JWT + HMAC   │
+└────────────────────┘         └──────────┬─────────────────┘
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    │                     │                     │
+                    ▼                     ▼                     ▼
+             ┌────────────┐       ┌────────────┐       ┌────────────────┐
+             │   MySQL    │       │   Redis    │       │ ClipSync-Server│
+             │ users/     │       │ オンライン /│       │  (HTTP フォール│
+             │ devices/   │       │ Pub/Sub /  │       │  バック)       │
+             │ admin_*    │       │ JWT/jti    │       │ /server-admin/*│
+             └────────────┘       └────────────┘       └────────────────┘
 ```
 
-[deploy/deploy.sh](deploy/deploy.sh) はデプロイ時に正しい location ブロックを nginx 設定へ書き込み、nginx を reload します。
-
-### Server との実行関係
+### レイヤー構造
 
 ```
-          ブラウザ (Vue 3 SPA)
-                 │  HTTPS
-                 ▼
-        ┌── Nginx (/clipsync/admin/) ──┐
-        │                              │
-        ▼                              ▼
-  ClipSync-Admin (:28002)       ClipSync-Server (:28001)
-        │                              │
-        │  ① Redis Pub/Sub             │
-        ├──────────────┬───────────────┤
-        │              │               │
-        ▼              ▼               ▼
-   MySQL (clipsync)   Redis db=0/2   メモリ Hub（端末オンライン）
-   users/devices 共有   Pub/Sub チャネル
+internal/
+├── main.go
+├── config/           # 設定構造体 + viper 読み込み
+├── router/           # ルーティング組み立て、ミドルウェア登録
+├── middleware/       # JWT 認証、RBAC、署名検証、CORS、TraceID、アクセスログ
+├── handler/          # HTTP コントローラ（auth / data / rbac / upload）
+├── service/          # ビジネスロジック
+│   ├── auth_service.go
+│   ├── data_service.go       # ユーザー / デバイス / ダッシュボード
+│   ├── rbac_service.go
+│   └── server_notifier.go    # Redis Pub/Sub + HTTP 2重チャネル配信
+├── model/            # GORM モデル（biz は Server テーブルを共有、rbac は admin_ プレフィックス）
+├── auth/             # JWT、bcrypt + scrypt パスワードハッシュ、HMAC 署名
+├── bootstrap/        # テーブル移行、スーパー管理者とメニューのシード
+├── db/               # MySQL / Redis 接続初期化
+├── logger/           # zap ログ
+└── result/           # 統一レスポンス構造とエラーコード
 ```
 
-- Admin と Server は **MySQL と Redis を共有**します;
-- Admin が `users`/`devices` を書き換えた後、Pub/Sub で Server に実際の切断/ステータス更新を実行させ、二重書き込みの不整合を回避します;
-- 端末オンライン状態の権威は Server で、Admin はまず HTTP で Server を呼び出します。
+### データモデル
+
+- **Server と共有するテーブル**：`users`、`devices`（Admin は一部フィールドの書き込みのみ行い、テーブル構造は Server が管理）
+- **RBAC テーブル（すべて `admin_` プレフィックス）**：
+  - `admin_rbac_admin`：管理者
+  - `admin_rbac_role`：ロール
+  - `admin_rbac_admin_role`：管理者 ↔ ロール
+  - `admin_rbac_menu`：メニュー / ボタン / データ列
+  - `admin_rbac_perm`：API 権限（route + method でユニーク）
+  - `admin_rbac_role_menu`：ロール ↔ メニュー
+  - `admin_rbac_menu_perm`：メニュー ↔ 権限
+
+### Server との連携メカニズム
+
+| トリガーアクション | Redis Pub/Sub | HTTP フォールバック |
+|--------------------|---------------|---------------------|
+| ユーザーパスワードリセット | ✅ `kick_user` / `password_reset` | ✅ |
+| ユーザー無効化 | ✅ `kick_user` / `user_disabled` | ✅ |
+| ユーザー削除 | ✅ `kick_user` / `user_deleted` | ✅ |
+| ユーザーを強制ログアウト | ✅ `kick_user` / `device_kicked` | ✅ |
+| デバイス無効化 | ✅ `disable_device` | ✅ |
+| デバイス有効化 | ✅ `enable_device` | ✅ |
+| 1台のデバイスをキック | ✅ `kick_device` | ✅ |
+| デバイスリネーム | — | ✅ `PUT /server-admin/users/{id}/devices/{did}/name` |
+| ユーザー作成 | — | ✅ `POST /server-admin/users`（パスワードは Server が scrypt でハッシュ化） |
+| デバイス一覧 / オンライン状態 | — | ✅ `GET /server-admin/users/{id}/devices` と `GET /server-admin/devices` |
+
+デバイス一覧は **Server HTTP を優先**します。オンライン状態は Server のメモリ Hub が最も権威的だからです。Server に到達できない場合にのみ、ローカルの MySQL + Redis クエリにフォールバックします。
 
 ---
 
-## 📁 プロジェクト構成
+## 🌐 デプロイ
+
+### Docker Compose（host ネットワーク）
+
+[deploy/docker-compose.yml](deploy/docker-compose.yml) は host ネットワークを使用し、コンテナはホストの `:28002` を直接待ち受けます。`127.0.0.1` で Server や MySQL / Redis に直接接続できます：
+
+```yaml
+services:
+  admin:
+    image: ghcr.io/jh-clipsync/clipsync-admin:${ADMIN_TAG:-latest}
+    container_name: clipsync-admin
+    restart: unless-stopped
+    network_mode: host
+    command: ["-c", "/data/config/config.yaml"]
+    volumes:
+      - ./config:/data/config:ro
+      - ./uploads:/data/uploads
+    environment:
+      - TZ=Asia/Shanghai
+```
+
+### Nginx リバースプロキシ
+
+完全な例は [deploy/nginx.clipsync.conf](deploy/nginx.clipsync.conf) を参照してください：
+
+```nginx
+# Admin バックエンド API
+location ^~ /clipsync/admin/api/ {
+    proxy_pass http://127.0.0.1:28002/api/admin/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# Admin アップロードファイル
+location ^~ /clipsync/admin/static/ {
+    proxy_pass http://127.0.0.1:28002/static/;
+}
+
+# Admin フロントエンド静的ファイル
+location /clipsync/admin/ {
+    alias /app/ClipSync/admin/web/;
+    index index.html;
+    try_files $uri $uri/ /clipsync/admin/index.html;
+}
+
+# ClipSync-Server WebSocket
+location = /clipsync/ws {
+    proxy_pass http://127.0.0.1:28001/ws;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+}
+```
+
+### ディレクトリ構成（本番環境）
 
 ```
-ClipSync-Admin/
-├── main.go                       # エントリ: 設定読み込み → DB/Redis/JWT 初期化 → Gin 起動
-├── config.example.yaml           # 設定テンプレート
-├── Dockerfile                    # マルチステージビルド → distroless nonroot
-├── internal/
-│   ├── config/                   # viper 設定ローダー
-│   ├── db/                       # MySQL / Redis 接続初期化
-│   ├── auth/
-│   │   ├── jwt.go                # JWT 発行/検証
-│   │   ├── password.go           # 管理者 bcrypt + 業務ユーザー scrypt
-│   │   └── sign.go               # HMAC-SHA256 リクエスト署名
-│   ├── model/
-│   │   ├── base.go               # 共通カラム（status/is_del/c_by/...）
-│   │   ├── biz.go                # User（Server の users テーブルにマップ）
-│   │   └── rbac.go               # Admin/Role/Menu/Perm とジョイントテーブル
-│   ├── result/                   # 統一レスポンスとエラーコード
-│   ├── middleware/
-│   │   ├── sign.go               # グローバル署名検証
-│   │   ├── rbac.go               # JWT + エンドポイント権限チェック
-│   │   └── common.go             # CORS / TraceID / AccessLog
-│   ├── service/
-│   │   ├── auth_service.go       # 管理者ログイン/セッション/動的署名鍵
-│   │   ├── rbac_service.go       # RBAC CRUD
-│   │   ├── data_service.go       # ユーザー/端末/ダッシュボード
-│   │   └── server_notifier.go    # Redis Pub/Sub + HTTP 二経路 Server 通知
-│   ├── handler/                  # HTTP ハンドラ（auth/data/rbac/upload）
-│   ├── bootstrap/                # AutoMigrate + スーパー管理者/メニュー/権限シード
-│   ├── router/                   # ルート組み立て
-│   └── logger/                   # zap ロガー
-├── deploy/
-│   ├── deploy.sh                 # ワンショットデプロイ（CI から SSH 実行）
-│   ├── docker-compose.yml
-│   ├── nginx.clipsync.conf       # 完全なリバースプロキシ例
-│   └── .env.example
-└── .github/workflows/docker-image.yml
+/app/ClipSync/
+├── server/              # ClipSync-Server
+│   └── config/config.yaml
+└── admin/
+    ├── api/             # 本プロジェクト
+    │   ├── config/config.yaml
+    │   ├── uploads/
+    │   └── docker-compose.yml
+    └── web/             # ClipSync-Admin-Web ビルド成果物（静的ファイル）
+        ├── index.html
+        └── assets/
 ```
 
 ---
 
-## 🐛 トラブルシューティング
+## 🔐 セキュリティについて
 
-| 現象 | 確認すること |
-|------|--------------|
-| ログインで署名エラー | フロントの `VITE_SIGN_STATIC_SECRET` がバックエンドの `security.sign_static_secret` と一致しているか。システム時刻が大きくずれていないか |
-| キックが効かない | Server は起動しているか。`server.key_prefix` が Server の `redis.key_prefix` と一致しているか。Server に `server.admin_token` が設定されているか。Server ログに「管理端末イベント購読が切断されました」が出ていないか |
-| 端末オンライン状態が不正確 | Admin が Server HTTP API に到達できない場合ローカル Redis にフォールバックします。`server.addr` と `http_admin_token` を確認。最も権威があるのは Server のメモリ Hub です |
-| ユーザー作成に失敗する | Admin のコンテナ/プロセスから `server.addr` で Server に到達できるか。ユーザー作成はローカル DB 挿入ではなく HTTP で Server を呼びます |
-| コンテナの時刻がおかしい | docker-compose で `TZ=Asia/Shanghai` を設定済み。ホストのタイムゾーンを確認 |
-| RBAC テーブルがない | MySQL アカウントに CREATE TABLE 権限があるか。初回起動時に `admin_rbac_*` テーブルを自動マイグレーションします |
-| 画像アップロードが 413 | nginx の `client_max_body_size` はデフォルト1m、サンプル設定で12m に変更済み。外側のゲートウェイで制限されていないか |
-
-ログは stdout（コンテナ）に出力されます。`docker compose logs -f admin` で確認してください。
+- **管理者パスワード**：bcrypt ハッシュ、cost デフォルト10（`security.bcrypt_cost` で調整可）
+- **業務ユーザーパスワード**：Admin がユーザーパスワードをリセットする際、Server と完全に同一の **scrypt** ハッシュ（N=32768, r=8, p=1）を使用し、共有 DB で読み取れることを保証
+- **JWT**：HS256 署名、ペイロードに `aid`（管理者 ID）+ `acc`（アカウント）+ `jti` を含む。Redis による失効とスライディングリフレッシュをサポート
+- **ログインロック**：デフォルト15分以内に連続5回失敗するとアカウントをロック
+- **API 署名（HMAC-SHA256）**：
+  - 署名対象文字列：`METHOD\nPATH\nQUERY\nTIMESTAMP\nNONCE\nBODY_MD5`
+  - `PATH` は `/api/admin` プレフィックスを除いた相対パス
+  - `QUERY` は key の辞書順にソート
+  - ログイン前は静的鍵 `sign_static_secret` を使用。ログイン成功後、サーバーがセッションレベルのランダム `signSecret` を発行し、ログアウトで失効
+  - 署名比較は `hmac.Equal` を使用し、定数時間でタイミング攻撃を防止
+- **CORS**：デフォルトでは設定されたオリジンのみ許可。本番環境では `cors.allow_origins` を実際のフロントエンドドメインに変更してください
+- **Server 通信**：HTTP フォールバックには `Authorization: Bearer <server.admin_token>` が必須。空の場合は Server に拒否されます。Redis Pub/Sub は内网経由で、公衆網には露出しません
+- **コンテナセキュリティ**：distroless nonroot イメージ、シェルなし、非 root ユーザーで実行
+- **デフォルトパスワード**：スーパー管理者のデフォルトパスワード `Admin**8` は初回起動専用です。**デプロイ後は必ずすぐに変更**してください。`jwt.secret` と `sign_static_secret` も必ず差し替えてください
 
 ---
 
 ## 🤝 関連プロジェクト
 
-| プロジェクト | 技術スタック | リンク |
-|------|--------|------|
-| 中継サーバー | Go + gorilla/websocket | [JH-Clipsync/ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) |
-| 管理画面フロント | Vue 3 + Element Plus | [JH-Clipsync/ClipSync-Admin-Web](https://github.com/JH-Clipsync/ClipSync-Admin-Web) |
-| Android クライアント | Kotlin + OkHttp | [JH-Clipsync/ClipSync-Android](https://github.com/JH-Clipsync/ClipSync-Android) |
-| macOS クライアント | Swift + SwiftUI | [JH-Clipsync/ClipSync-Mac](https://github.com/JH-Clipsync/ClipSync-Mac) |
-| Windows クライアント | .NET 8 + WPF | [JH-Clipsync/ClipSync-Windows](https://github.com/JH-Clipsync/ClipSync-Windows) |
-
----
-
-## 📄 License
-
-個人利用のプロジェクトです。コードの参照・改変は自由に行ってください。
-
----
-
-**Made with ❤️ · 全プラットフォーム自作 · データはあなたのもの**
+- [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server)：3端末同期リレーサーバー（Go + gorilla/websocket）
+- [ClipSync-Admin-Web](https://github.com/JH-Clipsync/ClipSync-Admin-Web)：管理フロントエンド（Vue 3 + Element Plus）
+- [ClipSync-Windows](https://github.com/JH-Clipsync/ClipSync-Windows)：Windows クライアント
+- [ClipSync-Mac](https://github.com/JH-Clipsync/ClipSync-Mac)：macOS クライアント
+- [ClipSync-Android](https://github.com/JH-Clipsync/ClipSync-Android)：Android クライアント

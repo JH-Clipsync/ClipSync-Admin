@@ -1,7 +1,7 @@
 <h1 align="center">ClipSync-Admin</h1>
 
 <p align="center">
-  <b>Admin backend for the ClipSync system</b><br/>
+  <b>Admin backend for ClipSync</b><br/>
   <a href="README.md">简体中文</a> ·
   <a href="README.en.md">English</a> ·
   <a href="README.ja.md">日本語</a>
@@ -9,43 +9,27 @@
 
 ---
 
-ClipSync-Admin is the admin dashboard backend for the self-hosted [ClipSync](https://github.com/JH-Clipsync) cross-device messaging system. It is built with **Go + Gin + GORM + MySQL + Redis + JWT** and targets ops / support / administrators. It provides dashboard stats, user management, device management, RBAC (admin / role / menu / permission) and administrator authentication, and integrates with [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) over both Redis Pub/Sub and HTTP so that "reset password" instantly kicks devices and "ban device" instantly disconnects them.
+ClipSync-Admin is the admin backend for the [ClipSync](https://github.com/JH-Clipsync) self-hosted cross-device messaging sync system, built with **Go + Gin + GORM + MySQL + Redis + JWT**. It targets ops / support / administrators and provides user management, device management, dashboard statistics, RBAC role permissions, administrator authentication, and more. It integrates with [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) through both Redis Pub/Sub and HTTP channels, achieving "password reset means immediate kick, disabled device means immediate disconnect." It listens on port **28002** by default.
 
 The companion frontend is [ClipSync-Admin-Web](https://github.com/JH-Clipsync/ClipSync-Admin-Web) (Vue 3 + Element Plus).
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
-| Area | What it does |
-|------|--------------|
-| 📊 **Dashboard** | Totals for users, active users, admins and roles |
-| 👤 **User management** | List (search / disabled filter / paginated), detail, edit, enable/disable, reset password (auto-generated, plaintext returned once), delete, force-kick; each user shows total devices and online count |
-| 📱 **Device management** | List all devices of a user (role / platform / custom name / last IP / online status), cross-user paginated search, enable/disable, rename, kick a single device |
-| 🔌 **Real-time online status** | The device list first calls Server's `GET /server-admin/users/{id}/devices` (online state sourced from Server's in-memory Hub); falls back to local MySQL + Redis when Server is unavailable |
-| 📣 **Server integration** | On password reset / user ban / user deletion / device ban, notifies Server via Redis Pub/Sub (channel `clipsync:admin:kick_user`) to disconnect immediately; HTTP fallback if Redis is down |
-| 🛡️ **RBAC** | Full CRUD for admins / roles / menus / API permissions; many-to-many relations for role-menu, menu-permission, admin-role; endpoint-level enforcement; built-in superadmin `admin` is protected from deletion |
-| 🔐 **Admin authentication** | JWT (2h TTL with sliding refresh), bcrypt for admin passwords, failed-attempt lockout, revocable tokens (jti stored in Redis) |
-| ✍️ **API request signing** | Every request must carry an HMAC-SHA256 signature (method/path/query/timestamp/nonce/bodyMD5). Pre-login uses a static `sign_static_secret`; post-login switches to a per-session dynamic secret to prevent tampering and replay |
-| 🖼️ **Image upload** | Admin avatars etc.; extension whitelist + size limit + date-partitioned storage |
-| 🧩 **Shared database** | Shares the same MySQL `clipsync` database with ClipSync-Server. Business tables (`users` / `devices`) are owned by Server; Admin only migrates its own `admin_rbac_*` tables (all prefixed `admin_` to avoid collisions) |
-| 🔑 **Dual hashing** | Admin passwords use bcrypt; business user passwords use scrypt (fully compatible with Server, N=32768/r=8/p=1) |
-| 🐳 **Docker-native** | Multi-stage build producing a distroless nonroot image, host networking for direct MySQL/Redis access, listens on `:28002`; deploy script auto-generates the admin config from Server's `config.yaml` |
-
----
-
-## 🏗️ Tech Stack
-
-- **Language**: Go 1.22+
-- **HTTP framework**: [Gin](https://github.com/gin-gonic/gin) v1.10
-- **ORM**: [GORM](https://gorm.io) v1.25 + `gorm.io/driver/mysql`
-- **Database**: MySQL 8 (shared with ClipSync-Server)
-- **Cache**: Redis (separate DB, db=2 by default)
-- **JWT**: `golang-jwt/jwt/v5`, revocable by jti
-- **Config**: [viper](https://github.com/spf13/viper) (YAML + `CLIPSYNC_ADMIN_` env prefix)
-- **Logger**: [zap](https://github.com/uber-go/zap)
-- **Password hashing**: bcrypt for admins / scrypt for business users
-- **Image**: `gcr.io/distroless/base-debian12:nonroot`
+| Module | Description |
+|--------|-------------|
+| 📊 **Dashboard statistics** | Total users, active users (`disabled=0`), number of administrators, number of roles |
+| 👤 **User management** | User list (search by username / filter by status / pagination), details, create, edit, enable / disable, reset password (randomly generates 10-character plaintext and returns it), physical delete, proactive kick; each user aggregates total devices and current online count |
+| 📱 **Device management** | List all devices of a user (role / platform / custom name / last IP / online status), cross-user paginated search (fuzzy matching by username / device ID / name / IP), enable / disable devices, rename devices, kick a single device |
+| 🔌 **Real-time online status** | The device list **prioritizes calling the Server via HTTP** at `GET /server-admin/users/{id}/devices` to obtain real-time online status (based on the Server's in-memory Hub); when the Server is unavailable, it automatically falls back to local MySQL + Redis |
+| 📣 **Server integration notifications** | On password reset / user ban / user deletion / device disable / device kick, the Server is notified to disconnect immediately via Redis Pub/Sub (channel `clipsync:admin:kick_user`); if Redis is unavailable, it falls back to HTTP `POST {server.addr}/server-admin/kick` — double insurance |
+| 🛡️ **RBAC permissions** | Full CRUD for admins / roles / menus / API permissions; many-to-many relationships for role-menu, menu-permission, admin-role; interface-level interception; the built-in super admin `admin` is protected and cannot be deleted |
+| 🔐 **Admin authentication** | JWT (HS256, TTL 2 hours, sliding refresh), bcrypt admin password hashing (cost configurable), login failure count lockout, revocable tokens |
+| ✍️ **API request signing** | Every request requires an HMAC-SHA256 signature (method / path / query / timestamp / nonce / bodyMD5). Before login, a static key `sign_static_secret` is used; after login, it switches to a session-level dynamic key to prevent replay and tampering |
+| 🖼️ **Image upload** | Image uploads such as admin avatars, with extension whitelist + size limit + date-based directory storage, served externally as a static directory |
+| 🗄️ **Shared database with Server** | Directly reads Server's `users` / `devices` tables; all admin-related tables use the `admin_` prefix to avoid interference |
+| 🐳 **Docker-native** | Multi-stage build → distroless nonroot image; host networking to connect directly to the host's MySQL / Redis; `deploy.sh` can auto-generate the admin config from the Server config |
 
 ---
 
@@ -53,285 +37,333 @@ The companion frontend is [ClipSync-Admin-Web](https://github.com/JH-Clipsync/Cl
 
 ### Prerequisites
 
-- MySQL 8 (with the `clipsync` database and `users` / `sessions` / `devices` tables already initialized by ClipSync-Server)
-- Redis (same instance as Server; Admin uses db=2)
-- ClipSync-Server running with `server.admin_token` configured
+- [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) is already deployed and can connect to the same MySQL / Redis instance
+- The `clipsync` database already exists in MySQL (Server startup will auto-create the `users` / `sessions` / `devices` tables)
+- Docker (recommended) or Go 1.22+
 
-### Option 1: Docker (recommended)
+### Option 1: Docker Compose (recommended)
 
-`deploy/deploy.sh` auto-reads MySQL/Redis connection info from Server's `config.yaml` and generates the admin config:
+```bash
+# 1. Prepare the deployment directory
+mkdir -p /app/ClipSync/admin/api/config /app/ClipSync/admin/api/uploads
+cd /app/ClipSync/admin/api
+
+# 2. Copy the compose file
+cp deploy/docker-compose.yml .
+cp deploy/.env.example .env
+
+# 3. Auto-generate the admin config.yaml from the Server config
+#    The script looks for the Server config in this order:
+#      /app/ClipSync/server/config/config.yaml
+#      /app/ClipSync/server/config.yml
+#      /app/ClipSync/config/config.yaml
+#      /app/Clipsync/server/config/config.yaml
+#      /opt/clipsync/config/config.yaml
+bash deploy/deploy.sh
+```
+
+`deploy.sh` will:
+
+1. Automatically read MySQL / Redis / `key_prefix` / `admin_token` from the Server `config.yaml`
+2. Generate local `config/config.yaml`, with the JWT secret randomly generated from `/dev/urandom`
+3. Detect and repair config corruption caused by historical migration scripts (e.g., `redis.addr` mistakenly changed to an http URL)
+4. `docker compose pull && up -d --force-recreate`
+5. Check and repair the nginx config (API paths, static resource locations)
+
+Default super admin account:
+
+```
+Account: admin
+Password: Admin**8
+```
+
+> Please change the password immediately after first login.
+
+### Option 2: Docker one-liner
+
+```bash
+docker run -d --name clipsync-admin \
+  --network host \
+  --restart unless-stopped \
+  -v $(pwd)/config:/data/config:ro \
+  -v $(pwd)/uploads:/data/uploads \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/jh-clipsync/clipsync-admin:latest \
+  -c /data/config/config.yaml
+```
+
+### Option 3: Run from source
 
 ```bash
 git clone https://github.com/JH-Clipsync/ClipSync-Admin.git
 cd ClipSync-Admin
 
-# Deploy script places files under /app/ClipSync/admin/api by default
-sudo mkdir -p /app/ClipSync/admin/api/config /app/ClipSync/admin/api/uploads
-sudo cp deploy/docker-compose.yml /app/ClipSync/admin/api/
-
-# config/config.yaml is auto-generated from Server config by the deploy script;
-# make sure server.http_admin_token matches Server's server.admin_token
-
-cd /app/ClipSync/admin/api
-docker compose up -d
-docker compose logs -f admin
-```
-
-Default listen address is `:28002`.
-
-### Option 2: Pull the official image
-
-```bash
-docker run -d --name clipsync-admin \
-  --network host \
-  -v $(pwd)/config:/data/config:ro \
-  -v $(pwd)/uploads:/data/uploads \
-  -e TZ=Asia/Shanghai \
-  ghcr.io/jh-clipsync/clipsync-admin:latest
-```
-
-Image registry: [ghcr.io/jh-clipsync/clipsync-admin](https://github.com/orgs/JH-Clipsync/packages)
-
-### Option 3: Run from source
-
-```bash
-# Requires Go 1.22+ and reachable MySQL / Redis
+# Prepare config
 cp config.example.yaml config.yaml
-# Edit config.yaml:
-#   - mysql.dsn points to the clipsync database
-#   - redis.addr / redis.db
-#   - jwt.secret to a random string
-#   - server.http_admin_token matches Server's server.admin_token
+vim config.yaml   # Fill in MySQL / Redis / JWT secret / Server integration info
 
-go mod tidy
+# Run
 go run .
-# Or specify a config file
-go run . -c /path/to/config.yaml
+
+# Or build
+CGO_ENABLED=0 go build -ldflags "-s -w" -o clipsync-admin .
+./clipsync-admin -c config.yaml
 ```
 
-### Default credentials
+On startup it will automatically:
 
-On first startup a superadmin is seeded automatically:
-
-- Username: `admin`
-- Password: `Admin**8`
-
-**Change the password immediately after first login.** The built-in superadmin is protected and cannot be deleted.
+- Migrate all `admin_`-prefixed RBAC tables
+- Seed the super admin account `admin / Admin**8` (skipped if it already exists)
+- Seed default menus and permission nodes
 
 ---
 
 ## ⚙️ Configuration
 
-See [config.example.yaml](config.example.yaml). The config file can be selected with `-c`, or you can use environment variables with the `CLIPSYNC_ADMIN_` prefix (e.g. `CLIPSYNC_ADMIN_APP_ADDR`).
+See [config.example.yaml](config.example.yaml) for a config example. It is loaded with viper and supports environment variables (prefix `CLIPSYNC_ADMIN_`).
 
-| Section | Key fields | Description |
-|---|---|---|
-| `app` | `addr` / `mode` | Listen address (default `:28002`) / Gin mode (`debug` / `release`) |
-| `mysql` | `dsn` / `max_idle_conns` / `max_open_conns` | Same `clipsync` DB as Server; Admin only migrates RBAC tables |
-| `redis` | `addr` / `password` / `db` | Default db=2 to avoid conflict with Server (db=0) |
-| `jwt` | `secret` / `ttl` / `refresh_on_access` | JWT signing secret, lifetime in seconds (default 7200=2h), sliding refresh |
-| `security` | `bcrypt_cost` / `login_error_limit` / `login_error_ttl` / `sign_static_secret` | bcrypt cost, failed-login lock threshold/duration, pre-login static signing secret |
-| `cors` | `allow_origins` / `allow_credentials` | Allowed frontend origins; local dev defaults to `http://localhost:5175` |
-| `log` | `level` / `format` | Log level (debug/info/warn/error) / format (console/json) |
-| `bootstrap` | `super_admin_account` / `super_admin_password` / `super_admin_name` | Superadmin seeded at startup (skipped if already exists) |
-| `upload` | `dir` / `url_prefix` / `max_size` / `allow_ext` | Upload dir, URL prefix, per-file max, extension whitelist |
-| `server` | `key_prefix` / `addr` / `http_admin_token` | Server integration: Redis key prefix (must match Server's), Server HTTP fallback address, Server admin token |
+```yaml
+app:
+  name: clipsync-admin
+  addr: ":28002"        # Listen port
+  mode: debug           # gin mode: debug / release / test
 
-### Server integration
+mysql:
+  # Shares the same database as ClipSync-Server
+  dsn: "clipsync:clipsync@tcp(127.0.0.1:3306)/clipsync?charset=utf8mb4&parseTime=True&loc=Local"
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
 
-Admin talks to Server over two channels:
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 2                 # Recommend a different db from Server to avoid key conflicts (despite the prefix)
 
-1. **Redis Pub/Sub (primary)**: channel = `server.key_prefix + "admin:kick_user"` (default `clipsync:admin:kick_user`). Zero config, most reliable. Requires Admin and Server to connect to the same Redis instance.
-2. **HTTP fallback**: when Redis is unavailable, POSTs commands to `server.addr + "/server-admin/kick"` with `Authorization: Bearer <server.http_admin_token>`.
+jwt:
+  secret: "change-me-clipsync-admin-secret"   # ⚠️ Must be changed in production
+  header: "Authorization"
+  scheme: "Bearer"
+  ttl: 7200             # Token validity in seconds, default 2 hours
+  refresh_on_access: true
 
-For **queries and writes** such as listing devices, creating users or renaming devices, Admin always calls Server over HTTP (`server.addr` must be set); Server is the authority for the `devices` table and the in-memory Hub.
+security:
+  bcrypt_cost: 10       # bcrypt cost for admin passwords
+  login_error_limit: 5  # Number of failed logins before lockout
+  login_error_ttl: 900  # Failure count window in seconds
+  # Signing secret for pre-login endpoints (frontend hardcodes the same string; after successful login it switches to a dynamic key)
+  sign_static_secret: "clipsync-admin-static-sign-secret-v1"
+
+cors:
+  allow_origins:
+    - "http://localhost:5175"
+  allow_credentials: true
+
+log:
+  level: "info"
+  format: "console"     # console / json
+
+bootstrap:
+  super_admin_account: "admin"
+  super_admin_password: "Admin**8"
+  super_admin_name: "Super Administrator"
+
+upload:
+  dir: "./data/uploads"
+  url_prefix: "/static"
+  max_size: 10485760    # 10MB
+  allow_ext: [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+
+# Integration channel with ClipSync-Server
+server:
+  key_prefix: "clipsync:"         # Must match Server's redis.key_prefix
+  addr: "http://127.0.0.1:28001"  # Server HTTP address (for HTTP fallback)
+  http_admin_token: ""            # Must match Server's server.admin_token
+```
+
+### Key configuration notes
+
+| Config | Description |
+|--------|-------------|
+| `mysql.dsn` | Must connect to the same database as Server; Admin only auto-migrates `admin_*` tables and will not alter the `users` / `devices` table structures |
+| `redis.db` | Recommend choosing a different db from Server (Server defaults to db=0, Admin example uses db=2) to avoid stepping on each other; `key_prefix` must exactly match Server to receive Pub/Sub messages |
+| `jwt.secret` | Generate with `openssl rand -hex 32` or `head -c 32 /dev/urandom \| base64` |
+| `server.key_prefix` | Determines the Pub/Sub channel name `{prefix}admin:kick_user`; must match Server |
+| `server.addr` | Fallback channel for HTTP-based device list retrieval, user creation, and device renaming; recommend filling in an internal / localhost address |
+| `server.http_admin_token` | Bearer Token for the HTTP fallback; must exactly match Server's `server.admin_token` |
 
 ---
 
-## 🔌 API Reference
-
-All endpoints are prefixed with `/api/admin` and must pass the signature middleware.
-
-### Public endpoints
-
-| Path | Method | Description |
-|---|---|---|
-| `/api/admin/health` | GET | Health check |
-| `/api/admin/auth/login` | POST | Admin login (returns JWT + dynamic signing secret) |
-
-### Authenticated endpoints (JWT)
-
-| Path | Method | Description |
-|---|---|---|
-| `/api/admin/auth/logout` | POST | Logout (revokes jti) |
-| `/api/admin/auth/me` | GET | Current admin info |
-| `/api/admin/auth/menus` | GET | Menus visible to the current admin |
-| `/api/admin/auth/password` | PUT | Change own password |
-| `/api/admin/auth/profile` | PUT | Update own profile |
-| `/api/admin/upload/image` | POST | Image upload |
-
-### RBAC endpoints (JWT + permission check)
-
-| Resource | Operations |
-|---|---|
-| Dashboard | `GET /dashboard` |
-| Users | `GET/POST /users`, `GET/PUT/DELETE /users/:id`, `PUT /users/:id/status`, `POST /users/:id/reset-password`, `POST /users/:id/kick` |
-| User devices | `GET /users/:id/devices`, `PUT /users/:id/devices/:did` (enable/disable), `PUT /users/:id/devices/:did/name` (rename), `POST /users/:id/devices/:did/kick` |
-| All devices | `GET /devices` (cross-user search/filter/paginate) |
-| Admins | `GET/POST /rbac/admins`, `PUT/DELETE /rbac/admins/:id`, `PUT /rbac/admins/:id/status`, `PUT /rbac/admins/:id/password`, `GET /rbac/admins/:id/roles` |
-| Roles | `GET/POST/PUT/DELETE /rbac/roles`, `PUT /rbac/roles/:id/menus`, `GET /rbac/roles/:id/menus` |
-| Menus | `GET/POST/PUT/DELETE /rbac/menus`, `PUT /rbac/menus/:id/perms` |
-| Permissions | `GET/POST/PUT/DELETE /rbac/perms` |
-
-### Signature rules
-
-String to sign (separated by `\n`):
+## 🏗️ Project Architecture
 
 ```
-METHOD\nPATH\nQUERY\nTIMESTAMP\nNONCE\nBODY_MD5
+┌────────────────────┐         ┌────────────────────────────┐
+│ ClipSync-Admin-Web │ ──API──▶│     ClipSync-Admin         │
+│   (Vue 3 + EP)     │ ◀────── │  Gin + GORM + JWT + HMAC   │
+└────────────────────┘         └──────────┬─────────────────┘
+                                          │
+                    ┌─────────────────────┼─────────────────────┐
+                    │                     │                     │
+                    ▼                     ▼                     ▼
+             ┌────────────┐       ┌────────────┐       ┌────────────────┐
+             │   MySQL    │       │   Redis    │       │ ClipSync-Server│
+             │ users/     │       │ online /   │       │  (HTTP fallback)│
+             │ devices/   │       │ Pub/Sub /  │       │ /server-admin/*│
+             │ admin_*    │       │ JWT/jti    │       └────────────────┘
+             └────────────┘       └────────────┘
 ```
 
-- `PATH` is the relative path with the `/api/admin` prefix stripped
-- `QUERY` is sorted by key in lexicographic order
-- `TIMESTAMP` is milliseconds; `NONCE` is 16 random bytes in hex
-- `BODY_MD5` is the MD5 of the request body (empty string for GET / no body)
+### Layered structure
 
-Signature = lowercase hex of `HMAC-SHA256(secret, stringToSign)`. The frontend implementation lives in [ClipSync-Admin-Web/src/utils/sign.ts](https://github.com/JH-Clipsync/ClipSync-Admin-Web).
+```
+internal/
+├── main.go
+├── config/           # Config struct + viper loading
+├── router/           # Route assembly, middleware mounting
+├── middleware/       # JWT auth, RBAC, signature verification, CORS, TraceID, access logs
+├── handler/          # HTTP controllers (auth / data / rbac / upload)
+├── service/          # Business logic
+│   ├── auth_service.go
+│   ├── data_service.go       # Users / devices / dashboard
+│   ├── rbac_service.go
+│   └── server_notifier.go    # Redis Pub/Sub + HTTP dual-channel delivery
+├── model/            # GORM models (biz shares Server tables, rbac uses admin_ prefix)
+├── auth/             # JWT, bcrypt + scrypt password hashing, HMAC signing
+├── bootstrap/        # Table migration, super admin and menu seeding
+├── db/               # MySQL / Redis connection initialization
+├── logger/           # zap logger
+└── result/           # Unified response structure and error codes
+```
+
+### Data model
+
+- **Tables shared with Server**: `users`, `devices` (Admin only writes to some fields; table structure is maintained by Server)
+- **RBAC tables (all with `admin_` prefix)**:
+  - `admin_rbac_admin`: administrators
+  - `admin_rbac_role`: roles
+  - `admin_rbac_admin_role`: admin ↔ role
+  - `admin_rbac_menu`: menus / buttons / data columns
+  - `admin_rbac_perm`: API permissions (route + method unique)
+  - `admin_rbac_role_menu`: role ↔ menu
+  - `admin_rbac_menu_perm`: menu ↔ permission
+
+### Integration mechanism with Server
+
+| Trigger action | Redis Pub/Sub | HTTP fallback |
+|----------------|---------------|---------------|
+| Reset user password | ✅ `kick_user` / `password_reset` | ✅ |
+| Disable user | ✅ `kick_user` / `user_disabled` | ✅ |
+| Delete user | ✅ `kick_user` / `user_deleted` | ✅ |
+| Proactively kick user | ✅ `kick_user` / `device_kicked` | ✅ |
+| Disable device | ✅ `disable_device` | ✅ |
+| Enable device | ✅ `enable_device` | ✅ |
+| Kick single device | ✅ `kick_device` | ✅ |
+| Rename device | — | ✅ `PUT /server-admin/users/{id}/devices/{did}/name` |
+| Create user | — | ✅ `POST /server-admin/users` (password is hashed by Server using scrypt) |
+| Device list / online status | — | ✅ `GET /server-admin/users/{id}/devices` and `GET /server-admin/devices` |
+
+The device list **prioritizes Server HTTP**, because online status is most authoritative in Server's in-memory Hub; it only falls back to local MySQL + Redis queries when Server is unreachable.
 
 ---
 
-## 🔐 Security
+## 🌐 Deployment
 
-| Aspect | Design |
-|--------|--------|
-| Admin passwords | bcrypt (cost 10 by default), independent from business users |
-| Business user passwords | scrypt (N=32768/r=8/p=1), fully compatible with ClipSync-Server; Admin writes these directly when resetting passwords |
-| JWT revocation | Each token carries a jti; Redis maps jti→adminID and deletion on logout revokes the token |
-| Brute-force defense | Consecutive failures beyond a threshold (default 5) lock the account for a period (default 15 minutes) |
-| Request signing | All endpoints require HMAC-SHA256 signature with timestamp + nonce (anti-tamper/anti-replay). Static secret before login, dynamic secret issued after login |
-| CORS | Whitelisted origins, never `*` |
-| Table isolation | Admin's own RBAC tables are all prefixed `admin_` to avoid collisions with business tables |
-| DB privileges | In production, grant the MySQL account used by Admin only SELECT/UPDATE/INSERT/DELETE on the `clipsync` database — no DDL, no DROP |
-| Image hardening | distroless nonroot (uid 65532), no shell, no package manager |
+### Docker Compose (host networking)
 
----
+[deploy/docker-compose.yml](deploy/docker-compose.yml) uses host networking; the container listens directly on host `:28002` and can connect to Server and MySQL / Redis via `127.0.0.1`:
 
-## 🐳 Deployment Architecture
-
-### Nginx reverse-proxy routing
-
-[deploy/nginx.clipsync.conf](deploy/nginx.clipsync.conf) shows a complete same-origin path layout:
-
-```
-/clipsync/admin/api/       → 127.0.0.1:28002/api/admin/   (Admin API)
-/clipsync/admin/static/    → 127.0.0.1:28002/static/      (Admin uploads)
-/clipsync/admin/           → /app/ClipSync/admin/web/      (Admin SPA static)
-/clipsync/ws               → 127.0.0.1:28001/ws            (Server WebSocket)
-/clipsync/                 → 127.0.0.1:28001/              (Server other APIs)
+```yaml
+services:
+  admin:
+    image: ghcr.io/jh-clipsync/clipsync-admin:${ADMIN_TAG:-latest}
+    container_name: clipsync-admin
+    restart: unless-stopped
+    network_mode: host
+    command: ["-c", "/data/config/config.yaml"]
+    volumes:
+      - ./config:/data/config:ro
+      - ./uploads:/data/uploads
+    environment:
+      - TZ=Asia/Shanghai
 ```
 
-[deploy/deploy.sh](deploy/deploy.sh) writes the correct location blocks into the nginx config and reloads nginx during deployment.
+### Nginx reverse proxy
 
-### How it runs with Server
+See [deploy/nginx.clipsync.conf](deploy/nginx.clipsync.conf) for a full example:
+
+```nginx
+# Admin backend API
+location ^~ /clipsync/admin/api/ {
+    proxy_pass http://127.0.0.1:28002/api/admin/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# Admin uploaded files
+location ^~ /clipsync/admin/static/ {
+    proxy_pass http://127.0.0.1:28002/static/;
+}
+
+# Admin frontend static files
+location /clipsync/admin/ {
+    alias /app/ClipSync/admin/web/;
+    index index.html;
+    try_files $uri $uri/ /clipsync/admin/index.html;
+}
+
+# ClipSync-Server WebSocket
+location = /clipsync/ws {
+    proxy_pass http://127.0.0.1:28001/ws;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+}
+```
+
+### Directory layout (production)
 
 ```
-          Browser (Vue 3 SPA)
-                 │  HTTPS
-                 ▼
-        ┌── Nginx (/clipsync/admin/) ──┐
-        │                              │
-        ▼                              ▼
-  ClipSync-Admin (:28002)       ClipSync-Server (:28001)
-        │                              │
-        │  ① Redis Pub/Sub             │
-        ├──────────────┬───────────────┤
-        │              │               │
-        ▼              ▼               ▼
-   MySQL (clipsync)   Redis db=0/2   In-memory Hub (device presence)
-   shared users/      Pub/Sub channel
-   devices
-```
-
-- Admin and Server **share MySQL and Redis**;
-- After Admin writes the `users` / `devices` tables, it uses Pub/Sub to tell Server to actually perform the disconnect / status update (avoiding dual-write inconsistency);
-- Server is the authority for device online status; Admin queries it over HTTP first.
-
----
-
-## 📁 Project Structure
-
-```
-ClipSync-Admin/
-├── main.go                       # Entry: load config → init DB/Redis/JWT → start Gin
-├── config.example.yaml           # Config template
-├── Dockerfile                    # Multi-stage build → distroless nonroot
-├── internal/
-│   ├── config/                   # viper config loader
-│   ├── db/                       # MySQL / Redis connection init
-│   ├── auth/
-│   │   ├── jwt.go                # JWT issue/verify
-│   │   ├── password.go           # bcrypt for admins + scrypt for business users
-│   │   └── sign.go               # HMAC-SHA256 request signing
-│   ├── model/
-│   │   ├── base.go               # Common columns (status/is_del/c_by/...)
-│   │   ├── biz.go                # User (maps to Server's users table)
-│   │   └── rbac.go               # Admin/Role/Menu/Perm and join tables
-│   ├── result/                   # Unified response structure & error codes
-│   ├── middleware/
-│   │   ├── sign.go               # Global signature verification
-│   │   ├── rbac.go               # JWT + endpoint permission enforcement
-│   │   └── common.go             # CORS / TraceID / AccessLog
-│   ├── service/
-│   │   ├── auth_service.go       # Admin login/session/dynamic signing secret
-│   │   ├── rbac_service.go       # RBAC CRUD
-│   │   ├── data_service.go       # User/device/dashboard data
-│   │   └── server_notifier.go    # Redis Pub/Sub + HTTP dual-channel Server notifier
-│   ├── handler/                  # HTTP handlers (auth/data/rbac/upload)
-│   ├── bootstrap/                # AutoMigrate + superadmin/menu/perm seeding
-│   ├── router/                   # Route assembly
-│   └── logger/                   # zap logger
-├── deploy/
-│   ├── deploy.sh                 # One-shot deploy (SSH-invoked by CI)
-│   ├── docker-compose.yml
-│   ├── nginx.clipsync.conf       # Full reverse-proxy sample
-│   └── .env.example
-└── .github/workflows/docker-image.yml
+/app/ClipSync/
+├── server/              # ClipSync-Server
+│   └── config/config.yaml
+└── admin/
+    ├── api/             # This project
+    │   ├── config/config.yaml
+    │   ├── uploads/
+    │   └── docker-compose.yml
+    └── web/             # ClipSync-Admin-Web build output (static files)
+        ├── index.html
+        └── assets/
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## 🔐 Security Notes
 
-| Symptom | What to check |
-|---------|---------------|
-| Login returns signature error | Is the frontend's `VITE_SIGN_STATIC_SECRET` equal to the backend's `security.sign_static_secret`? Is the system clock skewed too much? |
-| Kick doesn't take effect | Is Server running? Does `server.key_prefix` match Server's `redis.key_prefix`? Does Server have `server.admin_token` set? Check Server logs for "admin event subscriber disconnected" |
-| Device online status is inaccurate | When Admin can't reach Server's HTTP API it falls back to local Redis; verify `server.addr` and `http_admin_token`. Server's in-memory Hub is the most authoritative source |
-| User creation fails | Can Admin reach Server from its container/process at `server.addr`? User creation goes through Server over HTTP — not a local DB insert |
-| Container time is wrong | docker-compose sets `TZ=Asia/Shanghai`; confirm the host timezone is correct |
-| RBAC tables missing | Does the MySQL account have CREATE TABLE privilege? On first startup the `admin_rbac_*` tables are auto-migrated |
-| Image upload returns 413 | nginx `client_max_body_size` defaults to 1m and is raised to 12m in the sample config; check whether an outer gateway limits it |
-
-Logs go to stdout (container) — view with `docker compose logs -f admin`.
+- **Admin passwords**: bcrypt hash, default cost 10 (adjustable via `security.bcrypt_cost`)
+- **Business user passwords**: When Admin resets a user password, it uses exactly the same **scrypt** hash as Server (N=32768, r=8, p=1), ensuring the shared database is readable
+- **JWT**: HS256 signed, payload contains `aid` (admin ID) + `acc` (account) + `jti`; supports Redis revocation and sliding refresh
+- **Login lockout**: By default, 5 consecutive failures within 15 minutes locks the account
+- **API signature (HMAC-SHA256)**:
+  - String to sign: `METHOD\nPATH\nQUERY\nTIMESTAMP\nNONCE\nBODY_MD5`
+  - `PATH` is the relative path with the `/api/admin` prefix stripped
+  - `QUERY` is sorted by key in lexicographic order
+  - Before login, the static key `sign_static_secret` is used; after successful login, the server issues a session-level random `signSecret`, which becomes invalid on logout
+  - Signature comparison uses `hmac.Equal`, constant-time to prevent timing attacks
+- **CORS**: By default only configured origins are allowed; in production be sure to change `cors.allow_origins` to the actual frontend domain
+- **Server communication**: The HTTP fallback must include `Authorization: Bearer <server.admin_token>`; if left empty it will be rejected by Server; Redis Pub/Sub runs on the internal network and is not exposed to the public internet
+- **Container security**: distroless nonroot image, no shell, runs as non-root user
+- **Default password**: The super admin default password `Admin**8` is only for first startup; **it must be changed immediately after deployment**; `jwt.secret` and `sign_static_secret` must also be replaced
 
 ---
 
 ## 🤝 Related Projects
 
-| Project | Stack | Link |
-|---------|-------|------|
-| Relay server | Go + gorilla/websocket | [JH-Clipsync/ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server) |
-| Admin frontend | Vue 3 + Element Plus | [JH-Clipsync/ClipSync-Admin-Web](https://github.com/JH-Clipsync/ClipSync-Admin-Web) |
-| Android client | Kotlin + OkHttp | [JH-Clipsync/ClipSync-Android](https://github.com/JH-Clipsync/ClipSync-Android) |
-| macOS client | Swift + SwiftUI | [JH-Clipsync/ClipSync-Mac](https://github.com/JH-Clipsync/ClipSync-Mac) |
-| Windows client | .NET 8 + WPF | [JH-Clipsync/ClipSync-Windows](https://github.com/JH-Clipsync/ClipSync-Windows) |
-
----
-
-## 📄 License
-
-Personal project — feel free to study, fork, and modify.
-
----
-
-**Made with ❤️ · Fully self-built across all platforms · Your data stays yours**
+- [ClipSync-Server](https://github.com/JH-Clipsync/ClipSync-Server): Three-endpoint sync relay server (Go + gorilla/websocket)
+- [ClipSync-Admin-Web](https://github.com/JH-Clipsync/ClipSync-Admin-Web): Admin frontend (Vue 3 + Element Plus)
+- [ClipSync-Windows](https://github.com/JH-Clipsync/ClipSync-Windows): Windows client
+- [ClipSync-Mac](https://github.com/JH-Clipsync/ClipSync-Mac): macOS client
+- [ClipSync-Android](https://github.com/JH-Clipsync/ClipSync-Android): Android client
