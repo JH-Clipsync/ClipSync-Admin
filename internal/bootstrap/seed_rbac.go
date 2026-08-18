@@ -230,11 +230,12 @@ func upsertMenu(db *gorm.DB, parentID uint64, s menuSeed, lg *zap.Logger) error 
 	} else if err != nil {
 		return err
 	} else {
-		// 保持父级/标题最新，其他字段尊重管理员在后台的修改
+		// 保持父级/标题/路径/图标/排序最新，其他字段尊重管理员在后台的修改
 		updates := map[string]any{
 			"parent_id": parentID,
 			"title":     s.Title,
 			"type":      s.Type,
+			"is_del":    0,
 		}
 		if s.Name != "" {
 			updates["name"] = s.Name
@@ -244,6 +245,9 @@ func upsertMenu(db *gorm.DB, parentID uint64, s menuSeed, lg *zap.Logger) error 
 		}
 		if s.Icon != "" {
 			updates["icon"] = s.Icon
+		}
+		if s.Sort != 0 {
+			updates["sort"] = s.Sort
 		}
 		if err := db.Model(&m).Updates(updates).Error; err != nil {
 			return err
