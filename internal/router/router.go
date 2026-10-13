@@ -91,8 +91,9 @@ func New(
 		rbacGroup.PUT("/users/:id/devices/:did/name", dataH.RenameDevice)
 		rbacGroup.POST("/users/:id/devices/:did/kick", dataH.KickDevice)
 		rbacGroup.DELETE("/users/:id/devices/:did", dataH.DeleteDevice)
-		// 全量设备管理（跨用户搜索/筛选/分页、批量删除）
+		// 全量设备管理（跨用户搜索/筛选/分页、批量启用/禁用、批量删除）
 		rbacGroup.GET("/devices", dataH.ListAllDevices)
+		rbacGroup.POST("/devices/batch-status", dataH.BatchSetDeviceStatus)
 		rbacGroup.POST("/devices/batch-delete", dataH.BatchDeleteDevices)
 
 		// RBAC management

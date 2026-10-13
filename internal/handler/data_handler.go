@@ -166,12 +166,24 @@ func (h *DataHandler) ListDevices(c *gin.Context) {
 }
 
 // ListAllDevices GET /devices 跨用户分页查询设备
-// 查询参数：keyword（用户名/设备ID/名称/IP）、status（0=正常 1=禁用 -1=全部）、user_id、page、size
+// 查询参数：keyword（用户名/设备ID/名称/IP）、status（0=正常 1=禁用 -1=全部）、
+// online（true=在线 false=离线，不传=不限）、user_id、page、size
 func (h *DataHandler) ListAllDevices(c *gin.Context) {
 	keyword := c.Query("keyword")
 	status := -1
 	if s := c.Query("status"); s != "" {
 		status = intQ(c, "status", -1)
+	}
+	var online *bool
+	if s := c.Query("online"); s != "" {
+		switch s {
+		case "true":
+			t := true
+			online = &t
+		case "false":
+			f := false
+			online = &f
+		}
 	}
 	userID := int64(0)
 	if s := c.Query("user_id"); s != "" {
@@ -181,7 +193,7 @@ func (h *DataHandler) ListAllDevices(c *gin.Context) {
 	}
 	page := intQ(c, "page", 1)
 	size := intQ(c, "size", 20)
-	pageData, err := h.svc.ListAllDevices(c.Request.Context(), keyword, status, userID, page, size)
+	pageData, err := h.svc.ListAllDevices(c.Request.Context(), keyword, status, online, userID, page, size)
 	if err != nil {
 		respBiz(c, err)
 		return
@@ -247,8 +259,8 @@ func (h *DataHandler) KickDevice(c *gin.Context) {
 	result.Success(c, nil)
 }
 
-// DeleteDevice DELETE /users/:id/devices/:did 删除设备登记记录。
-// Server 端会先禁用并踢该设备下线，再物理删除（未禁用的自动先禁用）。
+// DeleteDevice DELETE /users/:id/devices/:did 删除一台「已禁用」设备。
+// Server 对仍在线的连接兜底踢下线后物理删除；未禁用会返回业务错误（409 语义）。
 func (h *DataHandler) DeleteDevice(c *gin.Context) {
 	deviceID := c.Param("did")
 	if deviceID == "" {
@@ -290,6 +302,38 @@ func (h *DataHandler) BatchDeleteDevices(c *gin.Context) {
 			continue
 		}
 		if err := h.svc.DeleteDevice(ctx, it.UserID, it.DeviceID); err != nil {
+			failed = append(failed, it.DeviceID)
+			continue
+		}
+		success++
+	}
+	result.Success(c, gin.H{"success": success, "failed": failed, "total": len(req.Items)})
+}
+
+type batchSetDeviceStatusReq struct {
+	Disabled bool                     `json:"disabled"`
+	Items    []batchDeleteDeviceItem  `json:"items" binding:"required,min=1"`
+}
+
+// BatchSetDeviceStatus POST /devices/batch-status 批量启用/禁用设备。
+// 逐台转发 Server，部分失败不影响其它项，返回成功数与失败设备。
+func (h *DataHandler) BatchSetDeviceStatus(c *gin.Context) {
+	var req batchSetDeviceStatusReq
+	if !bindOrFail(c, &req) {
+		return
+	}
+	if len(req.Items) > 200 {
+		result.Fail(c, result.CodeParamError)
+		return
+	}
+	ctx := c.Request.Context()
+	success := 0
+	failed := make([]string, 0)
+	for _, it := range req.Items {
+		if it.UserID <= 0 || it.DeviceID == "" {
+			continue
+		}
+		if err := h.svc.SetDeviceStatus(ctx, it.UserID, it.DeviceID, req.Disabled); err != nil {
 			failed = append(failed, it.DeviceID)
 			continue
 		}

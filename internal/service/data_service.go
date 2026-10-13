@@ -398,7 +398,7 @@ func (s *AdminDataService) ListDevices(ctx context.Context, userID int64) ([]Dev
 // ListAllDevices 跨用户分页查询所有设备；userID > 0 时只查该用户。优先走 Server HTTP，
 // Server 不可用时回退到本地 DB 查询。keyword 同时模糊匹配用户名/设备ID/名称/IP。
 func (s *AdminDataService) ListAllDevices(
-	ctx context.Context, keyword string, disabled int, userID int64, page, size int,
+	ctx context.Context, keyword string, disabled int, online *bool, userID int64, page, size int,
 ) (*Page, error) {
 	page, size = normalize(page, size)
 	if s.kick != nil {
@@ -407,7 +407,7 @@ func (s *AdminDataService) ListAllDevices(
 			v := disabled != 0
 			b = &v
 		}
-		serverDevices, total, err := s.kick.FetchAllDevices(ctx, keyword, b, userID, page, size)
+		serverDevices, total, err := s.kick.FetchAllDevices(ctx, keyword, b, online, userID, page, size)
 		if err == nil {
 			list := make([]Device, 0, len(serverDevices))
 			for _, sd := range serverDevices {

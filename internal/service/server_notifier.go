@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/clipsync/admin/internal/config"
@@ -139,9 +140,17 @@ func (n *ServerNotifier) SetDeviceStatus(ctx context.Context, userID int64, devi
 	})
 }
 
-// DeleteDevice 删除某用户下的一台设备。Server 收到后会先禁用并踢该设备下线，
-// 再物理删除登记记录。走 Redis Pub/Sub + HTTP 兜底，与其它设备动作一致。
+// DeleteDevice 删除某用户下的一台「已禁用」设备，Server 会对仍在线的连接兜底踢下线后
+// 物理删除登记。删除有前置校验（未禁用返回 409），需要同步拿到结果，因此优先走 HTTP；
+// 仅当未配置 server.addr 时才降级为 fire-and-forget 的 Pub/Sub。
 func (n *ServerNotifier) DeleteDevice(ctx context.Context, userID int64, deviceID string) error {
+	if n.cfg.Addr != "" {
+		return n.commandViaHTTP(ctx, AdminCommand{
+			Action:   ActionDeleteDevice,
+			UserID:   userID,
+			DeviceID: deviceID,
+		})
+	}
 	return n.sendCommand(ctx, AdminCommand{
 		Action:   ActionDeleteDevice,
 		UserID:   userID,
@@ -181,8 +190,8 @@ func (n *ServerNotifier) FetchDevices(ctx context.Context, userID int64) ([]Serv
 }
 
 // FetchAllDevices 调用 Server GET /server-admin/devices 跨用户分页查询设备。
-// userID > 0 时只查该用户。
-func (n *ServerNotifier) FetchAllDevices(ctx context.Context, keyword string, disabled *bool, userID int64, page, pageSize int) ([]ServerDevice, int64, error) {
+// userID > 0 时只查该用户；online 非 nil 时按在线/离线过滤（Server 内存态）。
+func (n *ServerNotifier) FetchAllDevices(ctx context.Context, keyword string, disabled *bool, online *bool, userID int64, page, pageSize int) ([]ServerDevice, int64, error) {
 	if n.cfg.Addr == "" {
 		return nil, 0, fmt.Errorf("server.addr 未配置，无法获取设备列表")
 	}
@@ -195,6 +204,9 @@ func (n *ServerNotifier) FetchAllDevices(ctx context.Context, keyword string, di
 	}
 	if disabled != nil {
 		u += "&disabled=" + strconv.FormatBool(*disabled)
+	}
+	if online != nil {
+		u += "&online=" + strconv.FormatBool(*online)
 	}
 	var result struct {
 		List  []ServerDevice `json:"list"`
@@ -338,6 +350,10 @@ func (n *ServerNotifier) commandViaHTTP(ctx context.Context, cmd AdminCommand) e
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusConflict {
+		// 删除设备前置校验失败（未禁用）：把 Server 的中文原因原样抛给上层/前端。
+		return fmt.Errorf("%s", strings.TrimSpace(string(respBody)))
+	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("notify server via http: status=%d body=%s", resp.StatusCode, string(respBody))
 	}
