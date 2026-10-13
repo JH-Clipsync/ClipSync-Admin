@@ -559,6 +559,18 @@ func (s *AdminDataService) KickDevice(ctx context.Context, userID int64, deviceI
 	return nil
 }
 
+// DeleteDevice 删除某用户下的一台设备。Server 端会先禁用并踢该设备下线，
+// 再物理删除登记记录。设备表以 Server 为权威源，Admin 只转发、不本地双写。
+func (s *AdminDataService) DeleteDevice(ctx context.Context, userID int64, deviceID string) error {
+	if s.kick == nil {
+		return biz(result.CodeInternalError, "未配置 Server 联动，无法删除设备")
+	}
+	if err := s.kick.DeleteDevice(ctx, userID, deviceID); err != nil {
+		return biz(result.CodeInternalError, err.Error())
+	}
+	return nil
+}
+
 // KickUser 主动踢某用户全部设备下线（不改密码、不禁用，相当于"让他重登一次"）。
 func (s *AdminDataService) KickUserNow(ctx context.Context, userID int64) error {
 	if s.kick == nil {

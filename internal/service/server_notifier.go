@@ -24,6 +24,7 @@ const (
 	ActionKickDevice    AdminAction = "kick_device"
 	ActionDisableDevice AdminAction = "disable_device"
 	ActionEnableDevice  AdminAction = "enable_device"
+	ActionDeleteDevice  AdminAction = "delete_device"
 )
 
 // Kick reason：与 Server 端 kickPayload.Reason 约定一致。
@@ -135,6 +136,17 @@ func (n *ServerNotifier) SetDeviceStatus(ctx context.Context, userID int64, devi
 		UserID:   userID,
 		DeviceID: deviceID,
 		Reason:   reason,
+	})
+}
+
+// DeleteDevice 删除某用户下的一台设备。Server 收到后会先禁用并踢该设备下线，
+// 再物理删除登记记录。走 Redis Pub/Sub + HTTP 兜底，与其它设备动作一致。
+func (n *ServerNotifier) DeleteDevice(ctx context.Context, userID int64, deviceID string) error {
+	return n.sendCommand(ctx, AdminCommand{
+		Action:   ActionDeleteDevice,
+		UserID:   userID,
+		DeviceID: deviceID,
+		Reason:   ReasonDeviceBanned,
 	})
 }
 

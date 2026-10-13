@@ -246,3 +246,54 @@ func (h *DataHandler) KickDevice(c *gin.Context) {
 	}
 	result.Success(c, nil)
 }
+
+// DeleteDevice DELETE /users/:id/devices/:did 删除设备登记记录。
+// Server 端会先禁用并踢该设备下线，再物理删除（未禁用的自动先禁用）。
+func (h *DataHandler) DeleteDevice(c *gin.Context) {
+	deviceID := c.Param("did")
+	if deviceID == "" {
+		result.Fail(c, result.CodeParamError)
+		return
+	}
+	if err := h.svc.DeleteDevice(c.Request.Context(), int64P(c, "id"), deviceID); err != nil {
+		respBiz(c, err)
+		return
+	}
+	result.Success(c, nil)
+}
+
+type batchDeleteDeviceItem struct {
+	UserID   int64  `json:"user_id"`
+	DeviceID string `json:"device_id"`
+}
+
+type batchDeleteDevicesReq struct {
+	Items []batchDeleteDeviceItem `json:"items" binding:"required,min=1"`
+}
+
+// BatchDeleteDevices POST /devices/batch-delete 批量删除设备。
+// 逐台转发 Server，部分失败不影响其它项，返回成功数与失败设备。
+func (h *DataHandler) BatchDeleteDevices(c *gin.Context) {
+	var req batchDeleteDevicesReq
+	if !bindOrFail(c, &req) {
+		return
+	}
+	if len(req.Items) > 200 {
+		result.Fail(c, result.CodeParamError)
+		return
+	}
+	ctx := c.Request.Context()
+	success := 0
+	failed := make([]string, 0)
+	for _, it := range req.Items {
+		if it.UserID <= 0 || it.DeviceID == "" {
+			continue
+		}
+		if err := h.svc.DeleteDevice(ctx, it.UserID, it.DeviceID); err != nil {
+			failed = append(failed, it.DeviceID)
+			continue
+		}
+		success++
+	}
+	result.Success(c, gin.H{"success": success, "failed": failed, "total": len(req.Items)})
+}

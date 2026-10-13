@@ -104,6 +104,8 @@ var rbacMenuTree = []menuSeed{
 					{Name: "更新设备状态", Route: "/api/admin/users/:id/devices/:did", Method: mPUT, IsIntercept: 1},
 					{Name: "重命名设备", Route: "/api/admin/users/:id/devices/:did/name", Method: mPUT, IsIntercept: 1},
 					{Name: "踢设备下线", Route: "/api/admin/users/:id/devices/:did/kick", Method: mPOST, IsIntercept: 1},
+					{Name: "删除设备", Route: "/api/admin/users/:id/devices/:did", Method: mDEL, IsIntercept: 1},
+					{Name: "批量删除设备", Route: "/api/admin/devices/batch-delete", Method: mPOST, IsIntercept: 1},
 				},
 			},
 		},
