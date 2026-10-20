@@ -584,17 +584,14 @@ func (s *AdminDataService) KickUserNow(ctx context.Context, userID int64) error 
 
 // ---------- 开放接口 ApiKey ----------
 
-// CreateAPIKey 为用户签发开放接口密钥。收件号码必填（Android 读不到本机号，由管理员填），
-// 发件号码不绑定（由调用方解密后自行过滤）。明文密钥仅此一次返回。
+// CreateAPIKey 为用户签发开放接口密钥。收件号码可选（仅作绑定标签，方便调用方自检；
+// 不做任何限制）。明文密钥仅此一次返回。
 func (s *AdminDataService) CreateAPIKey(ctx context.Context, userID int64, name, phone, deviceID, expiresAt string) (*CreatedAPIKey, error) {
 	if s.kick == nil {
 		return nil, biz(result.CodeInternalError, "未配置 Server 联动，无法创建 API Key")
 	}
-	phone = strings.TrimSpace(phone)
-	if phone == "" {
-		return nil, biz(result.CodeParamError, "收件号码必填")
-	}
 	name = strings.TrimSpace(name)
+	phone = strings.TrimSpace(phone)
 	deviceID = strings.TrimSpace(deviceID)
 	expiresAt = strings.TrimSpace(expiresAt)
 	// 校验过期时间格式（允许空=无限期），提前在 Admin 层挡掉非法输入
