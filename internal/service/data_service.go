@@ -20,10 +20,10 @@ import (
 // AdminDataService bundles simple CRUD for ClipSync business tables (users).
 // All list endpoints are paginated with (page, pageSize).
 type AdminDataService struct {
-	db      *gorm.DB
-	rdb     *redis.Client
-	prefix  string // ClipSync-Server 的 Redis key 前缀，如 "clipsync:"
-	kick    *ServerNotifier
+	db     *gorm.DB
+	rdb    *redis.Client
+	prefix string // ClipSync-Server 的 Redis key 前缀，如 "clipsync:"
+	kick   *ServerNotifier
 }
 
 func NewAdminDataService(db *gorm.DB, rdb *redis.Client, keyPrefix string, kick *ServerNotifier) *AdminDataService {
@@ -143,7 +143,7 @@ func (s *AdminDataService) GetUser(ctx context.Context, id int64) (*model.User, 
 // OnlineDevice 在线设备（来自 ClipSync-Server 写入的 Redis Hash）。
 type OnlineDevice struct {
 	DeviceID string `json:"device_id"`
-	Role     string `json:"role"` // pc | mobile
+	Role     string `json:"role"`     // pc | mobile
 	Platform string `json:"platform"` // mac / windows / android / ios / unknown
 }
 
@@ -577,6 +577,57 @@ func (s *AdminDataService) KickUserNow(ctx context.Context, userID int64) error 
 		return biz(result.CodeInternalError, "未配置 Server 联动，无法踢用户")
 	}
 	if err := s.kick.KickUser(ctx, userID, ReasonDeviceKicked); err != nil {
+		return biz(result.CodeInternalError, err.Error())
+	}
+	return nil
+}
+
+// ---------- 开放接口 ApiKey ----------
+
+// CreateAPIKey 为用户签发开放接口密钥。收件号码必填（Android 读不到本机号，由管理员填），
+// 发件号码不绑定（由调用方解密后自行过滤）。明文密钥仅此一次返回。
+func (s *AdminDataService) CreateAPIKey(ctx context.Context, userID int64, name, phone, deviceID, expiresAt string) (*CreatedAPIKey, error) {
+	if s.kick == nil {
+		return nil, biz(result.CodeInternalError, "未配置 Server 联动，无法创建 API Key")
+	}
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return nil, biz(result.CodeParamError, "收件号码必填")
+	}
+	name = strings.TrimSpace(name)
+	deviceID = strings.TrimSpace(deviceID)
+	expiresAt = strings.TrimSpace(expiresAt)
+	// 校验过期时间格式（允许空=无限期），提前在 Admin 层挡掉非法输入
+	if expiresAt != "" {
+		if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+			return nil, biz(result.CodeParamError, "过期时间需为 RFC3339 格式，或留空表示无限期")
+		}
+	}
+	out, err := s.kick.CreateAPIKey(ctx, userID, name, phone, deviceID, expiresAt)
+	if err != nil {
+		return nil, biz(result.CodeInternalError, err.Error())
+	}
+	return out, nil
+}
+
+// ListAPIKeys 列出 ApiKey；userID>0 只看该用户，0 看全部。
+func (s *AdminDataService) ListAPIKeys(ctx context.Context, userID int64) ([]APIKeyView, error) {
+	if s.kick == nil {
+		return nil, biz(result.CodeInternalError, "未配置 Server 联动，无法获取 API Key 列表")
+	}
+	items, err := s.kick.ListAPIKeys(ctx, userID)
+	if err != nil {
+		return nil, biz(result.CodeInternalError, err.Error())
+	}
+	return items, nil
+}
+
+// RevokeAPIKey 吊销（删除）一条 ApiKey。
+func (s *AdminDataService) RevokeAPIKey(ctx context.Context, keyID int64) error {
+	if s.kick == nil {
+		return biz(result.CodeInternalError, "未配置 Server 联动，无法吊销 API Key")
+	}
+	if err := s.kick.RevokeAPIKey(ctx, keyID); err != nil {
 		return biz(result.CodeInternalError, err.Error())
 	}
 	return nil

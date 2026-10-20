@@ -96,6 +96,12 @@ func New(
 		rbacGroup.POST("/devices/batch-status", dataH.BatchSetDeviceStatus)
 		rbacGroup.POST("/devices/batch-delete", dataH.BatchDeleteDevices)
 
+		// 开放接口 ApiKey 管理（验证码查询服务）
+		rbacGroup.GET("/api-keys", dataH.ListAllAPIKeys)
+		rbacGroup.GET("/users/:id/api-keys", dataH.ListAPIKeys)
+		rbacGroup.POST("/users/:id/api-keys", dataH.CreateAPIKey)
+		rbacGroup.DELETE("/api-keys/:keyId", dataH.RevokeAPIKey)
+
 		// RBAC management
 		rbacGroup.GET("/rbac/admins", rbacH.ListAdmins)
 		rbacGroup.POST("/rbac/admins", rbacH.CreateAdmin)

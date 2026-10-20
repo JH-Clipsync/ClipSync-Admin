@@ -366,3 +366,125 @@ func (n *ServerNotifier) commandViaHTTP(ctx context.Context, cmd AdminCommand) e
 	)
 	return nil
 }
+
+// ==================== 开放接口 ApiKey 管理（透传到 Server） ====================
+
+// APIKeyView ApiKey 列表项（不含任何密钥材料，明文仅创建时返回一次）。
+type APIKeyView struct {
+	ID         int64  `json:"id"`
+	UserID     int64  `json:"user_id"`
+	Username   string `json:"username"`
+	KeyPrefix  string `json:"key_prefix"`
+	Name       string `json:"name"`
+	Phone      string `json:"phone"`
+	DeviceID   string `json:"device_id"`
+	ExpiresAt  string `json:"expires_at"`
+	Disabled   bool   `json:"disabled"`
+	Expired    bool   `json:"expired"`
+	LastUsedAt string `json:"last_used_at"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// CreatedAPIKey 创建 ApiKey 的返回，api_key 明文仅此一次。
+type CreatedAPIKey struct {
+	ID        int64  `json:"id"`
+	APIKey    string `json:"api_key"`
+	KeyPrefix string `json:"key_prefix"`
+	Name      string `json:"name"`
+	Phone     string `json:"phone"`
+	DeviceID  string `json:"device_id"`
+	ExpiresAt string `json:"expires_at"`
+	CreatedAt string `json:"created_at"`
+	Hint      string `json:"hint"`
+}
+
+// CreateAPIKey 调用 Server POST /server-admin/users/{id}/api-keys。
+func (n *ServerNotifier) CreateAPIKey(ctx context.Context, userID int64, name, phone, deviceID, expiresAt string) (*CreatedAPIKey, error) {
+	if n.cfg.Addr == "" {
+		return nil, fmt.Errorf("server.addr 未配置，无法创建 API Key")
+	}
+	u := fmt.Sprintf("%s/server-admin/users/%d/api-keys", n.cfg.Addr, userID)
+	body, _ := json.Marshal(map[string]string{
+		"name":       name,
+		"phone":      phone,
+		"device_id":  deviceID,
+		"expires_at": expiresAt,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if n.cfg.HTTPAdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+n.cfg.HTTPAdminToken)
+	}
+	resp, err := n.cli.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 Server 失败: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("Server 返回错误 status=%d body=%s", resp.StatusCode, string(respBody))
+	}
+	var out CreatedAPIKey
+	if err := json.Unmarshal(respBody, &out); err != nil {
+		return nil, fmt.Errorf("解析 Server 响应失败: %w", err)
+	}
+	n.logger.Info("create api key via server http",
+		zap.Int64("user_id", userID),
+		zap.Int64("id", out.ID),
+		zap.String("phone", phone),
+	)
+	return &out, nil
+}
+
+// ListAPIKeys 调用 Server 列出某用户（userID>0）或全部（userID=0）ApiKey。
+func (n *ServerNotifier) ListAPIKeys(ctx context.Context, userID int64) ([]APIKeyView, error) {
+	if n.cfg.Addr == "" {
+		return nil, fmt.Errorf("server.addr 未配置，无法获取 API Key 列表")
+	}
+	var u string
+	if userID > 0 {
+		u = fmt.Sprintf("%s/server-admin/users/%d/api-keys", n.cfg.Addr, userID)
+	} else {
+		u = n.cfg.Addr + "/server-admin/api-keys"
+	}
+	var result struct {
+		Items []APIKeyView `json:"items"`
+		Total int          `json:"total"`
+	}
+	if err := n.getJSON(ctx, u, &result); err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+// RevokeAPIKey 调用 Server DELETE /server-admin/api-keys/{keyID}。
+func (n *ServerNotifier) RevokeAPIKey(ctx context.Context, keyID int64) error {
+	if n.cfg.Addr == "" {
+		return fmt.Errorf("server.addr 未配置，无法吊销 API Key")
+	}
+	u := fmt.Sprintf("%s/server-admin/api-keys/%d", n.cfg.Addr, keyID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return err
+	}
+	if n.cfg.HTTPAdminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+n.cfg.HTTPAdminToken)
+	}
+	resp, err := n.cli.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求 Server 失败: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("密钥不存在")
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("Server 返回错误 status=%d body=%s", resp.StatusCode, string(respBody))
+	}
+	n.logger.Info("revoke api key via server http", zap.Int64("id", keyID))
+	return nil
+}

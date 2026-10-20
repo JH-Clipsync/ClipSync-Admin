@@ -112,6 +112,22 @@ var rbacMenuTree = []menuSeed{
 		},
 	},
 	{
+		Code: "openapi-mgmt", Title: "开放接口", Name: "openapi-mgmt", Path: "/openapi-mgmt",
+		Icon: "Key", Type: 2, Sort: 40,
+		Children: []menuSeed{
+			{
+				Code: "biz:apikeys", Title: "ApiKey 管理", Name: "apikeys", Path: "/api-keys",
+				Type: 2, Sort: 41,
+				Perms: []permSeed{
+					{Name: "ApiKey 列表", Route: "/api/admin/api-keys", Method: mGET, IsIntercept: 1},
+					{Name: "用户 ApiKey 列表", Route: "/api/admin/users/:id/api-keys", Method: mGET, IsIntercept: 1},
+					{Name: "签发 ApiKey", Route: "/api/admin/users/:id/api-keys", Method: mPOST, IsIntercept: 1},
+					{Name: "吊销 ApiKey", Route: "/api/admin/api-keys/:keyId", Method: mDEL, IsIntercept: 1},
+				},
+			},
+		},
+	},
+	{
 		Code: "rbac", Title: "权限管理", Name: "rbac", Path: "/rbac",
 		Icon: "Lock", Type: 2, Sort: 50,
 		Children: []menuSeed{
