@@ -584,14 +584,13 @@ func (s *AdminDataService) KickUserNow(ctx context.Context, userID int64) error 
 
 // ---------- 开放接口 ApiKey ----------
 
-// CreateAPIKey 为用户签发开放接口密钥。收件号码可选（仅作绑定标签，方便调用方自检；
-// 不做任何限制）。明文密钥仅此一次返回。
-func (s *AdminDataService) CreateAPIKey(ctx context.Context, userID int64, name, phone, deviceID, expiresAt string) (*CreatedAPIKey, error) {
+// CreateAPIKey 为用户签发开放接口密钥。ApiKey 为账户级凭证，不绑定任何手机号；
+// 查哪张卡由调用请求的 receiver 参数决定。明文密钥仅此一次返回。
+func (s *AdminDataService) CreateAPIKey(ctx context.Context, userID int64, name, deviceID, expiresAt string) (*CreatedAPIKey, error) {
 	if s.kick == nil {
 		return nil, biz(result.CodeInternalError, "未配置 Server 联动，无法创建 API Key")
 	}
 	name = strings.TrimSpace(name)
-	phone = strings.TrimSpace(phone)
 	deviceID = strings.TrimSpace(deviceID)
 	expiresAt = strings.TrimSpace(expiresAt)
 	// 校验过期时间格式（允许空=无限期），提前在 Admin 层挡掉非法输入
@@ -600,7 +599,7 @@ func (s *AdminDataService) CreateAPIKey(ctx context.Context, userID int64, name,
 			return nil, biz(result.CodeParamError, "过期时间需为 RFC3339 格式，或留空表示无限期")
 		}
 	}
-	out, err := s.kick.CreateAPIKey(ctx, userID, name, phone, deviceID, expiresAt)
+	out, err := s.kick.CreateAPIKey(ctx, userID, name, deviceID, expiresAt)
 	if err != nil {
 		return nil, biz(result.CodeInternalError, err.Error())
 	}

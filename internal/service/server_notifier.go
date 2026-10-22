@@ -376,7 +376,6 @@ type APIKeyView struct {
 	Username   string `json:"username"`
 	KeyPrefix  string `json:"key_prefix"`
 	Name       string `json:"name"`
-	Phone      string `json:"phone"`
 	DeviceID   string `json:"device_id"`
 	ExpiresAt  string `json:"expires_at"`
 	Disabled   bool   `json:"disabled"`
@@ -391,7 +390,6 @@ type CreatedAPIKey struct {
 	APIKey    string `json:"api_key"`
 	KeyPrefix string `json:"key_prefix"`
 	Name      string `json:"name"`
-	Phone     string `json:"phone"`
 	DeviceID  string `json:"device_id"`
 	ExpiresAt string `json:"expires_at"`
 	CreatedAt string `json:"created_at"`
@@ -399,14 +397,13 @@ type CreatedAPIKey struct {
 }
 
 // CreateAPIKey 调用 Server POST /server-admin/users/{id}/api-keys。
-func (n *ServerNotifier) CreateAPIKey(ctx context.Context, userID int64, name, phone, deviceID, expiresAt string) (*CreatedAPIKey, error) {
+func (n *ServerNotifier) CreateAPIKey(ctx context.Context, userID int64, name, deviceID, expiresAt string) (*CreatedAPIKey, error) {
 	if n.cfg.Addr == "" {
 		return nil, fmt.Errorf("server.addr 未配置，无法创建 API Key")
 	}
 	u := fmt.Sprintf("%s/server-admin/users/%d/api-keys", n.cfg.Addr, userID)
 	body, _ := json.Marshal(map[string]string{
 		"name":       name,
-		"phone":      phone,
 		"device_id":  deviceID,
 		"expires_at": expiresAt,
 	})
@@ -434,7 +431,6 @@ func (n *ServerNotifier) CreateAPIKey(ctx context.Context, userID int64, name, p
 	n.logger.Info("create api key via server http",
 		zap.Int64("user_id", userID),
 		zap.Int64("id", out.ID),
-		zap.String("phone", phone),
 	)
 	return &out, nil
 }

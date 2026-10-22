@@ -11,7 +11,6 @@ import (
 
 type createAPIKeyReq struct {
 	Name      string `json:"name"`
-	Phone     string `json:"phone"`
 	DeviceID  string `json:"device_id"`
 	ExpiresAt string `json:"expires_at"` // RFC3339；留空 = 无限期
 }
@@ -23,7 +22,7 @@ func (h *DataHandler) CreateAPIKey(c *gin.Context) {
 		return
 	}
 	out, err := h.svc.CreateAPIKey(c.Request.Context(), int64P(c, "id"),
-		req.Name, req.Phone, req.DeviceID, req.ExpiresAt)
+		req.Name, req.DeviceID, req.ExpiresAt)
 	if err != nil {
 		respBiz(c, err)
 		return
